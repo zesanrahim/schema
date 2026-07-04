@@ -203,13 +203,22 @@ handle("worktree:diff", ({ id, filePath }) => {
     };
     return { path, status: statusMap[code[0] ?? "?"] ?? "M" as const };
   });
-  const diffCmd = filePath
-    ? `git diff HEAD -- "${filePath}"`
-    : "git diff HEAD";
   let raw = "";
-  try { raw = execSync(diffCmd, { cwd: wt.path }).toString(); } catch {}
-  if (!raw && filePath) {
-    try { raw = execSync(`git diff --cached -- "${filePath}"`, { cwd: wt.path }).toString(); } catch {}
+  if (filePath) {
+    const fileStatus = files.find((f) => f.path === filePath)?.status;
+    if (fileStatus === "?") {
+      try {
+        const content = fs.readFileSync(path.join(wt.path, filePath), "utf8");
+        raw = content.split("\n").map((l) => `+${l}`).join("\n");
+      } catch {}
+    } else {
+      try { raw = execSync(`git diff HEAD -- "${filePath}"`, { cwd: wt.path }).toString(); } catch {}
+      if (!raw) {
+        try { raw = execSync(`git diff --cached -- "${filePath}"`, { cwd: wt.path }).toString(); } catch {}
+      }
+    }
+  } else {
+    try { raw = execSync("git diff HEAD", { cwd: wt.path }).toString(); } catch {}
   }
   return { files, raw };
 });
