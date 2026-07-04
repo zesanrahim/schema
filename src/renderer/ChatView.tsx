@@ -4,7 +4,6 @@ import type { Chat, Message, ToolCall } from "../shared/types";
 
 interface Props {
   chat: Chat;
-  worktreeBranch: string;
   onNewChat: () => void;
   onDeleteChat: (id: string) => void;
   chatList: Chat[];
@@ -98,7 +97,7 @@ function MessageBubble({ msg }: { msg: Message }) {
   );
 }
 
-export function ChatView({ chat, worktreeBranch, onNewChat, onDeleteChat, chatList, onSelectChat }: Props) {
+export function ChatView({ chat, onNewChat, onDeleteChat, chatList, onSelectChat }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -209,16 +208,6 @@ export function ChatView({ chat, worktreeBranch, onNewChat, onDeleteChat, chatLi
         overflowX: "auto",
         background: "var(--surface)",
       }}>
-        <div style={{
-          display: "flex",
-          alignItems: "center",
-          padding: "0 14px",
-          borderRight: "1px solid var(--border)",
-          flexShrink: 0,
-        }}>
-          <span style={{ fontSize: 11, color: "var(--text-2)", whiteSpace: "nowrap" }}>{worktreeBranch}</span>
-        </div>
-
         <div style={{ display: "flex", alignItems: "stretch", flex: 1 }}>
           {chatList.map((c) => {
             const isActive = c.id === chat.id;

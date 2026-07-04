@@ -309,7 +309,6 @@ export function App() {
         ) : selectedWorktree && activeChat ? (
           <ChatView
             chat={activeChat}
-            worktreeBranch={selectedWorktree.branch}
             chatList={chats}
             onNewChat={() => createChat(selectedWorktree.id)}
             onDeleteChat={deleteChat}
