@@ -4,6 +4,7 @@ export interface Worktree {
   id: string;
   branch: string;
   path: string;
+  isMain: boolean;
 }
 
 export interface Agent {

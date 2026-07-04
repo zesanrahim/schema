@@ -28,16 +28,16 @@ function handle<K extends keyof IpcInvoke>(
 function loadWorktreesFromGit() {
   const output = execSync("git worktree list --porcelain", { cwd: repoRoot }).toString();
   const blocks = output.split("\n\n").filter(Boolean);
-  for (const block of blocks) {
+  blocks.forEach((block, i) => {
     const lines = block.split("\n");
     const pathLine = lines.find((l) => l.startsWith("worktree "));
     const branchLine = lines.find((l) => l.startsWith("branch "));
-    if (!pathLine) continue;
+    if (!pathLine) return;
     const worktreePath = pathLine.slice("worktree ".length);
     const branch = branchLine ? branchLine.slice("branch refs/heads/".length) : "detached";
-    const worktree: Worktree = { id: crypto.randomUUID(), branch, path: worktreePath };
+    const worktree: Worktree = { id: crypto.randomUUID(), branch, path: worktreePath, isMain: i === 0 };
     worktrees.set(worktree.id, worktree);
-  }
+  });
 }
 
 function createWindow() {
@@ -71,7 +71,7 @@ handle("worktree:create", ({ branch }) => {
     ? `git worktree add "${worktreePath}" "${branch}"`
     : `git worktree add "${worktreePath}" -b "${branch}"`;
   execSync(cmd, { cwd: repoRoot });
-  const worktree: Worktree = { id: crypto.randomUUID(), branch, path: worktreePath };
+  const worktree: Worktree = { id: crypto.randomUUID(), branch, path: worktreePath, isMain: false };
   worktrees.set(worktree.id, worktree);
   return worktree;
 });
