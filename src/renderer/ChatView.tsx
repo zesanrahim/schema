@@ -102,7 +102,6 @@ export function ChatView({ chat, worktreeBranch, onNewChat, onDeleteChat, chatLi
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [showHistory, setShowHistory] = useState(false);
   const [slashIndex, setSlashIndex] = useState(0);
   const [allCommands, setAllCommands] = useState<Array<{ name: string; description: string }>>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -204,89 +203,90 @@ export function ChatView({ chat, worktreeBranch, onNewChat, onDeleteChat, chatLi
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <div style={{
         display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "0 16px",
-        height: 44,
+        alignItems: "stretch",
         borderBottom: "1px solid var(--border)",
         flexShrink: 0,
+        overflowX: "auto",
+        background: "var(--surface)",
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 12, color: "var(--text-2)" }}>{worktreeBranch}</span>
-          <span style={{ color: "var(--text-3)" }}>/</span>
-          <div style={{ position: "relative" }}>
-            <button
-              onClick={() => setShowHistory((v) => !v)}
-              style={{
-                background: "none",
-                border: "none",
-                color: "var(--text)",
-                fontSize: 12,
-                display: "flex",
-                alignItems: "center",
-                gap: 4,
-                padding: 0,
-              }}
-            >
-              {chat.title}
-              <span style={{ fontSize: 9, color: "var(--text-3)" }}>▾</span>
-            </button>
-            {showHistory && (
-              <div style={{
-                position: "absolute",
-                top: "calc(100% + 6px)",
-                left: 0,
-                background: "var(--surface)",
-                border: "1px solid var(--border)",
-                minWidth: 220,
-                zIndex: 10,
-                boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
-              }}>
-                {chatList.map((c) => (
-                  <div
-                    key={c.id}
-                    onClick={() => { onSelectChat(c.id); setShowHistory(false); }}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      padding: "8px 12px",
-                      background: c.id === chat.id ? "var(--accent-dim)" : "none",
-                      cursor: "pointer",
-                      fontSize: 12,
-                      color: c.id === chat.id ? "var(--text)" : "var(--text-2)",
-                    }}
-                  >
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-                      {c.title}
-                    </span>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onDeleteChat(c.id); }}
-                      style={{ background: "none", border: "none", color: "var(--text-3)", fontSize: 13, padding: "0 2px", marginLeft: 8 }}
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          padding: "0 14px",
+          borderRight: "1px solid var(--border)",
+          flexShrink: 0,
+        }}>
+          <span style={{ fontSize: 11, color: "var(--text-2)", whiteSpace: "nowrap" }}>{worktreeBranch}</span>
         </div>
+
+        <div style={{ display: "flex", alignItems: "stretch", flex: 1 }}>
+          {chatList.map((c) => {
+            const isActive = c.id === chat.id;
+            return (
+              <div
+                key={c.id}
+                onClick={() => onSelectChat(c.id)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "0 12px",
+                  height: 40,
+                  borderRight: "1px solid var(--border)",
+                  background: isActive ? "var(--bg)" : "transparent",
+                  borderBottom: isActive ? "2px solid var(--accent)" : "2px solid transparent",
+                  cursor: "pointer",
+                  flexShrink: 0,
+                }}
+              >
+                <span style={{
+                  fontSize: 12,
+                  color: isActive ? "var(--text)" : "var(--text-2)",
+                  whiteSpace: "nowrap",
+                  maxWidth: 140,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}>
+                  {c.title}
+                </span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onDeleteChat(c.id); }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "var(--text-3)",
+                    fontSize: 13,
+                    padding: "0 2px",
+                    lineHeight: 1,
+                    flexShrink: 0,
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
         <button
           onClick={onNewChat}
           style={{
             background: "none",
-            border: "1px solid var(--border-2)",
-            color: "var(--text-2)",
-            padding: "4px 10px",
-            fontSize: 11,
+            border: "none",
+            borderLeft: "1px solid var(--border)",
+            color: "var(--text-3)",
+            padding: "0 14px",
+            fontSize: 16,
+            flexShrink: 0,
+            height: 40,
           }}
+          title="New chat"
         >
-          + New chat
+          +
         </button>
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "24px 20px" }} onClick={() => setShowHistory(false)}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "24px 20px" }}>
         {messages.length === 0 && (
           <div style={{
             height: "100%",
