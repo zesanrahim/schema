@@ -1,6 +1,20 @@
 import { useState, useEffect, useRef } from "react";
 import type { Chat, Message, ToolCall } from "../shared/types";
 
+const SLASH_COMMANDS = [
+  { name: "help",     description: "Show available commands and usage" },
+  { name: "clear",    description: "Clear the conversation history" },
+  { name: "compact",  description: "Compact conversation to save context" },
+  { name: "model",    description: "View or switch the current model" },
+  { name: "review",   description: "Review a GitHub PR" },
+  { name: "cost",     description: "Show token usage and cost for this session" },
+  { name: "doctor",   description: "Check Claude Code installation and config" },
+  { name: "status",   description: "Show account and auth status" },
+  { name: "memory",   description: "Manage Claude's memory files" },
+  { name: "config",   description: "View or edit configuration settings" },
+  { name: "init",     description: "Initialize a CLAUDE.md for this project" },
+];
+
 interface Props {
   chat: Chat;
   worktreeBranch: string;
@@ -102,8 +116,14 @@ export function ChatView({ chat, worktreeBranch, onNewChat, onDeleteChat, chatLi
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [slashIndex, setSlashIndex] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const slashFilter = input.startsWith("/") && !input.includes(" ")
+    ? SLASH_COMMANDS.filter((c) => c.name.startsWith(input.slice(1)))
+    : [];
+  const showSlash = slashFilter.length > 0;
 
   useEffect(() => {
     window.api.invoke("chat:messages", { chatId: chat.id }).then(setMessages);
@@ -154,11 +174,19 @@ export function ChatView({ chat, worktreeBranch, onNewChat, onDeleteChat, chatLi
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  function selectSlash(cmd: typeof SLASH_COMMANDS[number]) {
+    setInput("/" + cmd.name + " ");
+    setSlashIndex(0);
+    inputRef.current?.focus();
+  }
+
   async function send() {
     const text = input.trim();
     if (!text || sending) return;
     setInput("");
+    setSlashIndex(0);
     setSending(true);
+    const isSlash = text.startsWith("/");
     const optimistic: Message = {
       id: crypto.randomUUID(),
       role: "user",
@@ -175,7 +203,8 @@ export function ChatView({ chat, worktreeBranch, onNewChat, onDeleteChat, chatLi
       timestamp: Date.now(),
       done: false,
     };
-    setMessages((prev) => [...prev, optimistic, placeholder]);
+    if (!isSlash) setMessages((prev) => [...prev, optimistic, placeholder]);
+    else setMessages((prev) => [...prev, placeholder]);
     await window.api.invoke("chat:send", { chatId: chat.id, message: text });
   }
 
@@ -286,16 +315,58 @@ export function ChatView({ chat, worktreeBranch, onNewChat, onDeleteChat, chatLi
         padding: "12px 16px",
         borderTop: "1px solid var(--border)",
         flexShrink: 0,
+        position: "relative",
       }}>
+        {showSlash && (
+          <div style={{
+            position: "absolute",
+            bottom: "calc(100% - 8px)",
+            left: 16,
+            right: 16,
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            boxShadow: "0 -4px 12px rgba(0,0,0,0.3)",
+            zIndex: 10,
+          }}>
+            {slashFilter.map((cmd, i) => (
+              <div
+                key={cmd.name}
+                onMouseDown={(e) => { e.preventDefault(); selectSlash(cmd); }}
+                style={{
+                  display: "flex",
+                  alignItems: "baseline",
+                  gap: 10,
+                  padding: "7px 12px",
+                  background: i === slashIndex % slashFilter.length ? "var(--accent-dim)" : "none",
+                  cursor: "pointer",
+                }}
+              >
+                <span style={{ fontSize: 12, color: "var(--text)", fontWeight: 500 }}>/{cmd.name}</span>
+                <span style={{ fontSize: 11, color: "var(--text-3)" }}>{cmd.description}</span>
+              </div>
+            ))}
+          </div>
+        )}
         <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
           <textarea
             ref={inputRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => { setInput(e.target.value); setSlashIndex(0); }}
             onKeyDown={(e) => {
+              if (showSlash) {
+                if (e.key === "ArrowUp") { e.preventDefault(); setSlashIndex((i) => (i - 1 + slashFilter.length) % slashFilter.length); return; }
+                if (e.key === "ArrowDown") { e.preventDefault(); setSlashIndex((i) => (i + 1) % slashFilter.length); return; }
+                if (e.key === "Tab" || (e.key === "Enter" && slashFilter.length > 0 && input === "/" + (slashFilter[slashIndex % slashFilter.length]?.name ?? ""))) {
+                  e.preventDefault();
+                  const cmd = slashFilter[slashIndex % slashFilter.length];
+                  if (cmd) selectSlash(cmd);
+                  return;
+                }
+                if (e.key === "Escape") { setInput(""); return; }
+              }
               if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
             }}
-            placeholder="Message Claude… (Enter to send, Shift+Enter for newline)"
+            placeholder="Message Claude… (/ for commands)"
             rows={1}
             style={{
               flex: 1,

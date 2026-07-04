@@ -1,4 +1,4 @@
-import { spawn } from "child_process";
+import { spawn, ChildProcessWithoutNullStreams } from "child_process";
 import fs from "fs";
 import path from "path";
 import { app } from "electron";
@@ -6,6 +6,19 @@ import type { Chat, Message, ToolCall } from "../shared/types";
 
 export const chats = new Map<string, Chat>();
 export const chatMessages = new Map<string, Message[]>();
+
+// One persistent interactive claude process per chat
+const processes = new Map<string, ChildProcessWithoutNullStreams>();
+const buffers = new Map<string, string>();
+// Track the current in-flight assistant message per chat
+const activeMessages = new Map<string, Message>();
+
+type Sender = (channel: string, payload: unknown) => void;
+let globalSend: Sender = () => {};
+
+export function setSender(send: Sender) {
+  globalSend = send;
+}
 
 function storagePath() {
   return path.join(app.getPath("userData"), "chats.json");
@@ -50,6 +63,7 @@ export function listChats(worktreeId: string): Chat[] {
 }
 
 export function deleteChat(id: string) {
+  stopProcess(id);
   chats.delete(id);
   chatMessages.delete(id);
   persistChats();
@@ -59,7 +73,12 @@ export function getMessages(chatId: string): Message[] {
   return chatMessages.get(chatId) ?? [];
 }
 
-type Sender = (channel: string, payload: unknown) => void;
+function stopProcess(chatId: string) {
+  processes.get(chatId)?.kill("SIGTERM");
+  processes.delete(chatId);
+  buffers.delete(chatId);
+  activeMessages.delete(chatId);
+}
 
 function inputPreview(input: Record<string, unknown>): string {
   const val = input.file_path ?? input.command ?? input.pattern ?? Object.values(input)[0];
@@ -67,20 +86,16 @@ function inputPreview(input: Record<string, unknown>): string {
   return val.length > 60 ? val.slice(0, 60) + "…" : val;
 }
 
-function processEvent(
-  chatId: string,
-  messageId: string,
-  msg: Message,
-  event: Record<string, unknown>,
-  send: Sender
-) {
-  if (event.type === "assistant") {
+function processEvent(chatId: string, event: Record<string, unknown>) {
+  const msg = activeMessages.get(chatId);
+
+  if (event.type === "assistant" && msg) {
     const content = (event.message as { content?: Array<Record<string, unknown>> }).content ?? [];
     for (const block of content) {
       if (block.type === "text") {
         const text = block.text as string;
         msg.content += text;
-        send("chat:delta", { chatId, messageId, text });
+        globalSend("chat:delta", { chatId, messageId: msg.id, text });
       } else if (block.type === "tool_use") {
         const tool: ToolCall = {
           id: block.id as string,
@@ -88,10 +103,10 @@ function processEvent(
           input: block.input as Record<string, unknown>,
         };
         msg.toolCalls.push(tool);
-        send("chat:tool-start", { chatId, messageId, tool: { ...tool, preview: inputPreview(tool.input) } });
+        globalSend("chat:tool-start", { chatId, messageId: msg.id, tool: { ...tool, preview: inputPreview(tool.input) } });
       }
     }
-  } else if (event.type === "user") {
+  } else if (event.type === "user" && msg) {
     const content = (event.message as { content?: Array<Record<string, unknown>> }).content ?? [];
     for (const block of content) {
       if (block.type === "tool_result") {
@@ -101,7 +116,7 @@ function processEvent(
         const tool = msg.toolCalls.find((t) => t.id === toolId);
         if (tool) {
           tool.output = output.slice(0, 2000);
-          send("chat:tool-done", { chatId, messageId, toolId, output: tool.output });
+          globalSend("chat:tool-done", { chatId, messageId: msg.id, toolId, output: tool.output });
         }
       }
     }
@@ -109,32 +124,87 @@ function processEvent(
     const sessionId = event.session_id as string | undefined;
     if (sessionId) {
       const chat = chats.get(chatId);
-      if (chat) {
-        chat.sessionId = sessionId;
-        persistChats();
-      }
+      if (chat) { chat.sessionId = sessionId; }
     }
+    if (msg) {
+      msg.done = true;
+      activeMessages.delete(chatId);
+      persistChats();
+      globalSend("chat:done", { chatId, messageId: msg.id });
+    }
+  } else if (event.type === "system" && (event.subtype === "error" || event.subtype === "error_during_tool")) {
+    globalSend("chat:error", { chatId, error: String(event.error ?? "Unknown error") });
+    if (msg) { msg.done = true; activeMessages.delete(chatId); }
   }
 }
 
-export function sendMessage(chatId: string, userText: string, worktreePath: string, send: Sender) {
+function ensureProcess(chatId: string, worktreePath: string): ChildProcessWithoutNullStreams {
+  const existing = processes.get(chatId);
+  if (existing) return existing;
+
+  const chat = chats.get(chatId);
+  const shell = process.env.SHELL ?? "/bin/zsh";
+  const resumeFlag = chat?.sessionId ? `--resume "${chat.sessionId}"` : "";
+  const script = `claude --output-format stream-json --verbose --dangerously-skip-permissions ${resumeFlag}`;
+
+  const proc = spawn(shell, ["-lc", script], {
+    cwd: worktreePath,
+    env: { ...process.env },
+  }) as ChildProcessWithoutNullStreams;
+
+  buffers.set(chatId, "");
+
+  proc.stdout.on("data", (chunk: Buffer) => {
+    const buf = (buffers.get(chatId) ?? "") + chunk.toString();
+    const lines = buf.split("\n");
+    buffers.set(chatId, lines.pop() ?? "");
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try { processEvent(chatId, JSON.parse(line)); } catch {}
+    }
+  });
+
+  proc.on("close", () => {
+    processes.delete(chatId);
+    buffers.delete(chatId);
+    const msg = activeMessages.get(chatId);
+    if (msg) {
+      msg.done = true;
+      activeMessages.delete(chatId);
+      globalSend("chat:done", { chatId, messageId: msg.id });
+    }
+  });
+
+  proc.on("error", (err) => {
+    globalSend("chat:error", { chatId, error: err.message });
+    processes.delete(chatId);
+  });
+
+  processes.set(chatId, proc);
+  return proc;
+}
+
+export function sendMessage(chatId: string, userText: string, worktreePath: string) {
   const chat = chats.get(chatId);
   if (!chat) throw new Error(`Chat ${chatId} not found`);
 
   const msgs = chatMessages.get(chatId) ?? [];
 
-  const userMsg: Message = {
-    id: crypto.randomUUID(),
-    role: "user",
-    content: userText,
-    toolCalls: [],
-    timestamp: Date.now(),
-    done: true,
-  };
-  msgs.push(userMsg);
+  const isSlashCommand = userText.startsWith("/");
 
-  if (chat.title === "New chat") {
-    chat.title = userText.length > 40 ? userText.slice(0, 40) + "…" : userText;
+  if (!isSlashCommand) {
+    const userMsg: Message = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: userText,
+      toolCalls: [],
+      timestamp: Date.now(),
+      done: true,
+    };
+    msgs.push(userMsg);
+    if (chat.title === "New chat") {
+      chat.title = userText.length > 40 ? userText.slice(0, 40) + "…" : userText;
+    }
   }
 
   const assistantId = crypto.randomUUID();
@@ -148,37 +218,12 @@ export function sendMessage(chatId: string, userText: string, worktreePath: stri
   };
   msgs.push(assistantMsg);
   chatMessages.set(chatId, msgs);
+  activeMessages.set(chatId, assistantMsg);
 
-  const shell = process.env.SHELL ?? "/bin/zsh";
-  const resumeFlag = chat.sessionId ? `--resume "${chat.sessionId}"` : "";
-  const script = `claude --output-format stream-json --verbose --dangerously-skip-permissions ${resumeFlag} -p "$CLAUDE_MSG"`;
+  const proc = ensureProcess(chatId, worktreePath);
+  proc.stdin.write(userText + "\n");
+}
 
-  const proc = spawn(shell, ["-lc", script], {
-    cwd: worktreePath,
-    env: { ...process.env, CLAUDE_MSG: userText },
-  });
-
-  let buffer = "";
-
-  proc.stdout.on("data", (chunk: Buffer) => {
-    buffer += chunk.toString();
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      try {
-        processEvent(chatId, assistantId, assistantMsg, JSON.parse(line), send);
-      } catch {}
-    }
-  });
-
-  proc.on("close", () => {
-    assistantMsg.done = true;
-    persistChats();
-    send("chat:done", { chatId, messageId: assistantId });
-  });
-
-  proc.on("error", (err) => {
-    send("chat:error", { chatId, error: err.message });
-  });
+export function killAllProcesses() {
+  for (const [id] of processes) stopProcess(id);
 }

@@ -5,7 +5,7 @@ import { execSync } from "child_process";
 import type { IpcInvoke, IpcEvents, Repo, Worktree } from "../shared/types";
 
 import { clearToken, startDeviceFlow, pollForToken, getAuthStatus } from "./github";
-import { chats as chatStore, loadChats, createChat, listChats, deleteChat, getMessages, sendMessage } from "./chat";
+import { chats as chatStore, loadChats, createChat, listChats, deleteChat, getMessages, sendMessage, setSender, killAllProcesses } from "./chat";
 
 const dev = process.env.NODE_ENV !== "production";
 
@@ -165,9 +165,7 @@ handle("chat:send", ({ chatId, message }) => {
   if (!chat) throw new Error(`Chat ${chatId} not found`);
   const wt = worktrees.get(chat.worktreeId);
   if (!wt) throw new Error("Worktree not found for chat");
-  sendMessage(chatId, message, wt.path, (channel, payload) => {
-    mainWindow?.webContents.send(channel, payload);
-  });
+  sendMessage(chatId, message, wt.path);
 });
 
 handle("github:auth-start", () => startDeviceFlow());
@@ -179,11 +177,12 @@ app.whenReady().then(() => {
   initRepos();
   loadChats();
   createWindow();
+  setSender((channel, payload) => mainWindow?.webContents.send(channel, payload));
   globalShortcut.register("CommandOrControl+R", () => {
     app.relaunch();
     app.exit(0);
   });
 });
 
-app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
+app.on("window-all-closed", () => { killAllProcesses(); if (process.platform !== "darwin") app.quit(); });
 app.on("activate", () => { if (mainWindow === null) createWindow(); });
