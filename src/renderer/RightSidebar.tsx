@@ -103,10 +103,8 @@ export function RightSidebar({ worktree, repo, onUpdateRepo, onOpenDiff }: Props
   return (
     <div style={{ width: 300, flexShrink: 0, borderLeft: "1px solid var(--border)", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg)" }} ref={containerRef}>
 
-      {/* Top panel: diff + workspace */}
       <div style={{ height: `${splitPct}%`, flexShrink: 0, overflow: "auto", background: "var(--surface)" }}>
 
-        {/* Changed files */}
         <div style={{ padding: "10px 12px 0" }}>
           <SectionLabel action={
             <button onClick={loadDiff} style={{ background: "none", border: "none", color: "var(--text-3)", fontSize: 11, cursor: "pointer" }}>↻</button>
@@ -137,7 +135,6 @@ export function RightSidebar({ worktree, repo, onUpdateRepo, onOpenDiff }: Props
 
         <div style={{ borderTop: "1px solid var(--border)", margin: "4px 0" }} />
 
-        {/* Workspace */}
         <div style={{ padding: "8px 12px 12px" }}>
           <SectionLabel>Workspace</SectionLabel>
 
@@ -191,13 +188,11 @@ export function RightSidebar({ worktree, repo, onUpdateRepo, onOpenDiff }: Props
         </div>
       </div>
 
-      {/* Resize handle */}
       <div
         onMouseDown={() => { dragging.current = true; }}
         style={{ height: 4, flexShrink: 0, cursor: "row-resize", background: "transparent", borderTop: "1px solid var(--border)" }}
       />
 
-      {/* Terminal */}
       <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         <div style={{ fontSize: 10, fontWeight: 600, color: "var(--text-3)", letterSpacing: "0.06em", textTransform: "uppercase", padding: "8px 12px 4px", flexShrink: 0 }}>
           Terminal
