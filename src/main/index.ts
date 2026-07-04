@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, globalShortcut, dialog } from "electron";
 import path from "path";
 import fs from "fs";
+import os from "os";
 import { execSync } from "child_process";
 import type { IpcInvoke, IpcEvents, Repo, Worktree } from "../shared/types";
 
@@ -119,7 +120,8 @@ handle("worktree:create", ({ repoId, branch }) => {
   const repo = repos.get(repoId);
   if (!repo) throw new Error(`Repo ${repoId} not found`);
   const slug = branch.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase();
-  const worktreePath = path.join(path.dirname(repo.path), `${repo.name}-${slug}`);
+  const worktreePath = path.join(os.homedir(), "schema", repo.name, slug);
+  fs.mkdirSync(path.dirname(worktreePath), { recursive: true });
   const branchExists = execSync(`git branch --list "${branch}"`, { cwd: repo.path }).toString().trim() !== "";
   const cmd = branchExists
     ? `git worktree add "${worktreePath}" "${branch}"`
