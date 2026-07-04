@@ -19,7 +19,7 @@ export function getWorkspace(worktreeId: string): Workspace {
   return workspaces.get(worktreeId) ?? { worktreeId, status: "stopped", port: null, url: null };
 }
 
-export function startWorkspace(worktreeId: string, cwd: string, command: string) {
+export function startWorkspace(worktreeId: string, cwd: string, command: string, branch: string) {
   if (processes.has(worktreeId)) return;
 
   const ws: Workspace = { worktreeId, status: "starting", port: null, url: null };
@@ -47,8 +47,9 @@ export function startWorkspace(worktreeId: string, cwd: string, command: string)
     }
     const match = text.match(urlRe);
     if (match && match[0] && match[1] && !ws.url) {
-      ws.url = match[0].replace(/\/$/, "");
       ws.port = parseInt(match[1], 10);
+      const slug = branch.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-|-$/g, "");
+      ws.url = `http://${slug}.localhost:${ws.port}`;
       emit(ws);
     }
   }

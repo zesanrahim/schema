@@ -186,7 +186,7 @@ handle("workspace:start", ({ worktreeId }) => {
   if (!wt) throw new Error(`Worktree ${worktreeId} not found`);
   const repo = repos.get(wt.repoId);
   if (!repo?.devCommand) throw new Error("No dev command set for this repo");
-  startWorkspace(worktreeId, wt.path, repo.devCommand);
+  startWorkspace(worktreeId, wt.path, repo.devCommand, wt.branch);
 });
 handle("workspace:stop", ({ worktreeId }) => stopWorkspace(worktreeId));
 handle("workspace:get", ({ worktreeId }) => getWorkspace(worktreeId));
