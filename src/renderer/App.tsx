@@ -37,6 +37,7 @@ export function App() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [selectedWorktreeId, setSelectedWorktreeId] = useState<string | null>(null);
+  const [pushing, setPushing] = useState<string | null>(null);
   const [spawnCommand] = useState(() => localStorage.getItem("lastCommand") ?? "claude --dangerously-skip-permissions");
 
   useEffect(() => {
@@ -96,10 +97,13 @@ export function App() {
     setAgents((prev) => prev.map((a) => (a.id === id ? { ...a, status: "stopped" as const } : a)));
   }
 
-  async function commitAndPush(agentId: string) {
-    const prompt =
-      "Please run git add -A, then write a concise commit message based on the diff and commit, then push to origin. Do not ask for confirmation.";
-    await window.api.invoke("agent:input", { id: agentId, data: prompt + "\n" });
+  async function commitAndPush(worktreeId: string) {
+    setPushing(worktreeId);
+    try {
+      await window.api.invoke("worktree:commit-push", { id: worktreeId });
+    } finally {
+      setPushing(null);
+    }
   }
 
   const selectedWorktree = worktrees.find((w) => w.id === selectedWorktreeId) ?? null;
@@ -319,17 +323,18 @@ export function App() {
               <span style={{ fontSize: 11, color: "var(--text-2)" }}>{selectedWorktree?.branch}</span>
               <div style={{ display: "flex", gap: 6 }}>
                 <button
-                  onClick={() => commitAndPush(activeAgent.id)}
+                  onClick={() => commitAndPush(activeAgent.worktreeId)}
+                  disabled={pushing === activeAgent.worktreeId}
                   style={{
                     background: "none",
                     border: "1px solid var(--border-2)",
-                    color: "var(--accent)",
+                    color: pushing === activeAgent.worktreeId ? "var(--text-3)" : "var(--accent)",
                     padding: "3px 8px",
                     fontSize: 11,
+                    opacity: pushing === activeAgent.worktreeId ? 0.5 : 1,
                   }}
-                  title="Ask agent to commit all changes and push"
                 >
-                  ↑ Commit & Push
+                  {pushing === activeAgent.worktreeId ? "Pushing…" : "↑ Commit & Push"}
                 </button>
                 <button
                   onClick={() => killAgent(activeAgent.id)}

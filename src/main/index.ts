@@ -143,6 +143,28 @@ handle("worktree:remove", ({ id }) => {
   worktrees.delete(id);
 });
 
+handle("worktree:commit-push", ({ id }) => {
+  const wt = worktrees.get(id);
+  if (!wt) throw new Error(`Worktree ${id} not found`);
+
+  execSync("git add -A", { cwd: wt.path });
+
+  const stat = execSync("git diff --cached --stat", { cwd: wt.path }).toString().trim();
+  if (!stat) throw new Error("Nothing to commit");
+
+  const lines = stat.split("\n");
+  const summary = lines.at(-1)?.trim() ?? "";
+  const changed = lines.slice(0, -1).map((l) => l.trim().split(" ")[0]);
+  const commitMessage = changed.length === 1
+    ? `update ${changed[0]}`
+    : `update ${changed.length} files (${summary})`;
+
+  execSync(`git commit -m "${commitMessage}"`, { cwd: wt.path });
+  execSync("git push", { cwd: wt.path });
+
+  return { commitMessage };
+});
+
 handle("agent:spawn", ({ worktreeId, command }) => {
   const wt = worktrees.get(worktreeId);
   if (!wt) throw new Error(`Worktree ${worktreeId} not found`);
