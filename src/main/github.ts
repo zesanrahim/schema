@@ -60,12 +60,12 @@ let pendingDeviceCode: string | null = null;
 let pollInterval: number | null = null;
 
 export async function startDeviceFlow(): Promise<{ userCode: string; verificationUri: string }> {
+  if (!CLIENT_ID) throw new Error("GITHUB_CLIENT_ID is not set in .env");
   const res = await fetch("https://github.com/login/device/code", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({ client_id: CLIENT_ID, scope: "repo user" }),
   });
-  if (!CLIENT_ID) throw new Error("GITHUB_CLIENT_ID is not set in .env");
   const data = await res.json() as DeviceCodeResponse & { error?: string; error_description?: string };
   if (data.error || !data.device_code) {
     throw new Error(data.error_description ?? data.error ?? "Device flow not available. Enable it at github.com/settings/developers.");

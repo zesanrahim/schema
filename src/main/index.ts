@@ -6,6 +6,7 @@ import type { IpcInvoke, IpcEvents, Repo, Worktree } from "../shared/types";
 
 import { clearToken, startDeviceFlow, pollForToken, getAuthStatus } from "./github";
 import { chats as chatStore, loadChats, createChat, listChats, deleteChat, getMessages, sendMessage, setSender, killAllProcesses, fetchSlashCommands } from "./chat";
+import { createTerminal, writeTerminal, resizeTerminal, destroyTerminal, killAllTerminals, setTerminalSender } from "./terminal";
 
 const dev = process.env.NODE_ENV !== "production";
 
@@ -172,6 +173,17 @@ handle("chat:send", ({ chatId, message }) => {
   sendMessage(chatId, message, wt.path);
 });
 
+handle("terminal:create", ({ worktreeId }) => {
+  const wt = worktrees.get(worktreeId);
+  if (!wt) throw new Error(`Worktree ${worktreeId} not found`);
+  const terminalId = crypto.randomUUID();
+  createTerminal(terminalId, wt.path);
+  return { terminalId };
+});
+handle("terminal:input", ({ terminalId, data }) => writeTerminal(terminalId, data));
+handle("terminal:resize", ({ terminalId, cols, rows }) => resizeTerminal(terminalId, cols, rows));
+handle("terminal:destroy", ({ terminalId }) => destroyTerminal(terminalId));
+
 handle("github:auth-start", () => startDeviceFlow());
 handle("github:auth-poll", () => pollForToken());
 handle("github:auth-status", () => getAuthStatus());
@@ -182,11 +194,12 @@ app.whenReady().then(() => {
   loadChats();
   createWindow();
   setSender((channel, payload) => mainWindow?.webContents.send(channel, payload));
+  setTerminalSender((channel, payload) => mainWindow?.webContents.send(channel, payload));
   globalShortcut.register("CommandOrControl+R", () => {
     app.relaunch();
     app.exit(0);
   });
 });
 
-app.on("window-all-closed", () => { killAllProcesses(); if (process.platform !== "darwin") app.quit(); });
+app.on("window-all-closed", () => { killAllProcesses(); killAllTerminals(); if (process.platform !== "darwin") app.quit(); });
 app.on("activate", () => { if (mainWindow === null) createWindow(); });

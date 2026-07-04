@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
 import type { Repo, Worktree, Chat } from "../shared/types";
 import { ChatView } from "./ChatView";
+import { TerminalView } from "./TerminalView";
 import { Settings } from "./Settings";
+import { IconSettings, IconPlus } from "./icons";
 
 type View = "main" | "settings";
 
@@ -13,25 +15,14 @@ function generateBranch() {
   return `wt-${mm}${dd}-${rand}`;
 }
 
-function IconSettings() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
-      <path d="M7.5 9.5a2 2 0 100-4 2 2 0 000 4z" stroke="currentColor" strokeWidth="1.2"/>
-      <path d="M7.5 1v1.5M7.5 12.5V14M1 7.5h1.5M12.5 7.5H14M2.6 2.6l1.1 1.1M11.3 11.3l1.1 1.1M2.6 12.4l1.1-1.1M11.3 3.7l1.1-1.1" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-    </svg>
-  );
-}
-
-function IconPlus() {
-  return (
-    <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
-      <path d="M5.5 1v9M1 5.5h9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
-    </svg>
-  );
-}
+const PANES = [
+  { key: "chat" as const, label: "Chat" },
+  { key: "terminal" as const, label: "Terminal" },
+];
 
 export function App() {
   const [view, setView] = useState<View>("main");
+  const [pane, setPane] = useState<"chat" | "terminal">("chat");
   const [repos, setRepos] = useState<Repo[]>([]);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
   const [selectedWorktreeId, setSelectedWorktreeId] = useState<string | null>(null);
@@ -306,14 +297,53 @@ export function App() {
 
         {view === "settings" ? (
           <Settings onBack={() => setView("main")} />
-        ) : selectedWorktree && activeChat ? (
-          <ChatView
-            chat={activeChat}
-            chatList={chats}
-            onNewChat={() => createChat(selectedWorktree.id)}
-            onDeleteChat={deleteChat}
-            onSelectChat={setActiveChatId}
-          />
+        ) : selectedWorktree ? (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              borderBottom: "1px solid var(--border)",
+              background: "var(--surface)",
+              flexShrink: 0,
+              padding: "0 16px",
+              height: 36,
+              gap: 2,
+            }}>
+              {PANES.map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setPane(key)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    borderBottom: pane === key ? "2px solid var(--accent)" : "2px solid transparent",
+                    color: pane === key ? "var(--text)" : "var(--text-3)",
+                    padding: "0 10px",
+                    height: "100%",
+                    fontSize: 11,
+                    fontWeight: pane === key ? 600 : 400,
+                    letterSpacing: "0.04em",
+                    textTransform: "uppercase",
+                    cursor: "pointer",
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {pane === "chat" && activeChat ? (
+              <ChatView
+                chat={activeChat}
+                chatList={chats}
+                onNewChat={() => createChat(selectedWorktree.id)}
+                onDeleteChat={deleteChat}
+                onSelectChat={setActiveChatId}
+              />
+            ) : pane === "terminal" ? (
+              <TerminalView worktreeId={selectedWorktree.id} />
+            ) : null}
+          </div>
         ) : (
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <span style={{ fontSize: 12, color: "var(--text-3)" }}>select a worktree</span>

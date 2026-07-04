@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import type { Chat, Message, ToolCall } from "../shared/types";
 
-
 interface Props {
   chat: Chat;
   onNewChat: () => void;
@@ -9,6 +8,9 @@ interface Props {
   chatList: Chat[];
   onSelectChat: (id: string) => void;
 }
+
+type PastedBlock = { id: string; content: string; lines: number };
+type EditingBlock = { id: string; draft: string };
 
 function toolPreview(tool: ToolCall): string {
   const val = tool.input.file_path ?? tool.input.command ?? tool.input.pattern ?? Object.values(tool.input)[0];
@@ -47,14 +49,15 @@ function ToolCalls({ toolCalls }: { toolCalls: ToolCall[] }) {
           flexDirection: "column",
           gap: 3,
         }}>
-          {toolCalls.map((tc) => (
-            <div key={tc.id} style={{ fontSize: 11, color: "var(--text-2)" }}>
-              <span style={{ color: "var(--text)" }}>{tc.name}</span>
-              {toolPreview(tc) && (
-                <span style={{ color: "var(--text-3)", marginLeft: 6 }}>{toolPreview(tc)}</span>
-              )}
-            </div>
-          ))}
+          {toolCalls.map((tc) => {
+            const preview = toolPreview(tc);
+            return (
+              <div key={tc.id} style={{ fontSize: 11, color: "var(--text-2)" }}>
+                <span style={{ color: "var(--text)" }}>{tc.name}</span>
+                {preview && <span style={{ color: "var(--text-3)", marginLeft: 6 }}>{preview}</span>}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -97,12 +100,76 @@ function MessageBubble({ msg }: { msg: Message }) {
   );
 }
 
+function PasteEditor({
+  editing,
+  onSave,
+  onCancel,
+}: {
+  editing: EditingBlock;
+  onSave: (id: string, draft: string) => void;
+  onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState(editing.draft);
+  return (
+    <div style={{ position: "absolute", inset: 0, zIndex: 20, display: "flex", flexDirection: "column", background: "var(--bg)" }}>
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "0 16px",
+        height: 40,
+        borderBottom: "1px solid var(--border)",
+        flexShrink: 0,
+      }}>
+        <span style={{ fontSize: 12, color: "var(--text-2)" }}>
+          Edit pasted text
+          <span style={{ color: "var(--text-3)", marginLeft: 8 }}>{draft.split("\n").length} lines</span>
+        </span>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={onCancel}
+            style={{ background: "none", border: "1px solid var(--border-2)", color: "var(--text-3)", padding: "4px 10px", fontSize: 11 }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onSave(editing.id, draft)}
+            style={{ background: "var(--accent-dim)", border: "1px solid var(--border-2)", color: "var(--accent)", padding: "4px 10px", fontSize: 11 }}
+          >
+            Done
+          </button>
+        </div>
+      </div>
+      <textarea
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        style={{
+          flex: 1,
+          background: "var(--surface)",
+          border: "none",
+          color: "var(--text)",
+          padding: "16px",
+          fontSize: 12,
+          fontFamily: "Menlo, Monaco, 'Courier New', monospace",
+          lineHeight: 1.6,
+          resize: "none",
+          outline: "none",
+        }}
+      />
+    </div>
+  );
+}
+
 export function ChatView({ chat, onNewChat, onDeleteChat, chatList, onSelectChat }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [slashIndex, setSlashIndex] = useState(0);
   const [allCommands, setAllCommands] = useState<Array<{ name: string; description: string }>>([]);
+  const [pastedBlocks, setPastedBlocks] = useState<PastedBlock[]>([]);
+  const [pasteCount, setPasteCount] = useState(0);
+  const [editingBlock, setEditingBlock] = useState<EditingBlock | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -170,17 +237,42 @@ export function ChatView({ chat, onNewChat, onDeleteChat, chatList, onSelectChat
     inputRef.current?.focus();
   }
 
+  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const text = e.clipboardData.getData("text");
+    const lineCount = text.split("\n").length;
+    if (lineCount > 3 || text.length > 300) {
+      e.preventDefault();
+      setPasteCount((n) => n + 1);
+      setPastedBlocks((prev) => [...prev, { id: crypto.randomUUID(), content: text, lines: lineCount }]);
+    }
+  }
+
+  function saveBlockEdit(id: string, draft: string) {
+    setPastedBlocks((prev) => prev.map((b) =>
+      b.id === id ? { ...b, content: draft, lines: draft.split("\n").length } : b
+    ));
+    setEditingBlock(null);
+  }
+
   async function send() {
     const text = input.trim();
-    if (!text || sending) return;
+    if (!text && !pastedBlocks.length) return;
+    if (sending) return;
+
+    const parts = [...pastedBlocks.map((b) => b.content), text].filter(Boolean);
+    const fullMessage = parts.join("\n\n");
+
     setInput("");
     setSlashIndex(0);
+    setPastedBlocks([]);
+    if (inputRef.current) inputRef.current.style.height = "auto";
     setSending(true);
-    const isSlash = text.startsWith("/");
+
+    const isSlash = fullMessage.startsWith("/");
     const optimistic: Message = {
       id: crypto.randomUUID(),
       role: "user",
-      content: text,
+      content: fullMessage,
       toolCalls: [],
       timestamp: Date.now(),
       done: true,
@@ -195,11 +287,21 @@ export function ChatView({ chat, onNewChat, onDeleteChat, chatList, onSelectChat
     };
     if (!isSlash) setMessages((prev) => [...prev, optimistic, placeholder]);
     else setMessages((prev) => [...prev, placeholder]);
-    await window.api.invoke("chat:send", { chatId: chat.id, message: text });
+    await window.api.invoke("chat:send", { chatId: chat.id, message: fullMessage });
   }
 
+  const canSend = !sending && (!!input.trim() || pastedBlocks.length > 0);
+
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative" }}>
+      {editingBlock && (
+        <PasteEditor
+          editing={editingBlock}
+          onSave={saveBlockEdit}
+          onCancel={() => setEditingBlock(null)}
+        />
+      )}
+
       <div style={{
         display: "flex",
         alignItems: "stretch",
@@ -328,11 +430,41 @@ export function ChatView({ chat, onNewChat, onDeleteChat, chatList, onSelectChat
             ))}
           </div>
         )}
+        {pastedBlocks.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+            {pastedBlocks.map((block, i) => (
+              <div
+                key={block.id}
+                onClick={() => setEditingBlock({ id: block.id, draft: block.content })}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  background: "var(--surface-3)",
+                  border: "1px solid var(--border-2)",
+                  padding: "3px 8px",
+                  fontSize: 11,
+                  color: "var(--text-2)",
+                  cursor: "pointer",
+                }}
+              >
+                <span style={{ color: "var(--text-3)", marginRight: 2 }}>⎘</span>
+                Pasted text #{pasteCount - pastedBlocks.length + i + 1}
+                <span style={{ color: "var(--text-3)" }}>+{block.lines} lines</span>
+                <button
+                  onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setPastedBlocks((prev) => prev.filter((b) => b.id !== block.id)); }}
+                  style={{ background: "none", border: "none", color: "var(--text-3)", fontSize: 13, padding: "0 2px", lineHeight: 1, cursor: "pointer" }}
+                >×</button>
+              </div>
+            ))}
+          </div>
+        )}
         <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
           <textarea
             ref={inputRef}
             value={input}
             onChange={(e) => { setInput(e.target.value); setSlashIndex(0); }}
+            onPaste={handlePaste}
             onKeyDown={(e) => {
               if (showSlash) {
                 if (e.key === "ArrowUp") { e.preventDefault(); setSlashIndex((i) => (i - 1 + slashFilter.length) % slashFilter.length); return; }
@@ -360,18 +492,17 @@ export function ChatView({ chat, onNewChat, onDeleteChat, chatList, onSelectChat
               outline: "none",
               lineHeight: 1.5,
               fontFamily: "inherit",
-              maxHeight: 120,
-              overflow: "auto",
+              overflow: "hidden",
             }}
             disabled={sending}
           />
           <button
             onClick={send}
-            disabled={sending || !input.trim()}
+            disabled={!canSend}
             style={{
-              background: sending || !input.trim() ? "none" : "var(--accent-dim)",
+              background: canSend ? "var(--accent-dim)" : "none",
               border: "1px solid var(--border-2)",
-              color: sending || !input.trim() ? "var(--text-3)" : "var(--accent)",
+              color: canSend ? "var(--accent)" : "var(--text-3)",
               padding: "8px 14px",
               fontSize: 12,
               flexShrink: 0,

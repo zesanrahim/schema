@@ -2,18 +2,15 @@ import { spawn, ChildProcessWithoutNullStreams } from "child_process";
 import fs from "fs";
 import path from "path";
 import { app } from "electron";
-import type { Chat, Message, ToolCall } from "../shared/types";
+import type { Chat, Message, ToolCall, Sender } from "../shared/types";
 
 export const chats = new Map<string, Chat>();
 export const chatMessages = new Map<string, Message[]>();
 
-// One persistent interactive claude process per chat
 const processes = new Map<string, ChildProcessWithoutNullStreams>();
 const buffers = new Map<string, string>();
-// Track the current in-flight assistant message per chat
 const activeMessages = new Map<string, Message>();
 
-type Sender = (channel: string, payload: unknown) => void;
 let globalSend: Sender = () => {};
 
 export function setSender(send: Sender) {
@@ -80,6 +77,18 @@ function stopProcess(chatId: string) {
   activeMessages.delete(chatId);
 }
 
+function spawnShell(script: string, cwd: string): ChildProcessWithoutNullStreams {
+  const shell = process.env.SHELL ?? "/bin/zsh";
+  return spawn(shell, ["-lc", script], {
+    cwd,
+    env: { ...process.env },
+  }) as ChildProcessWithoutNullStreams;
+}
+
+function contentBlocks(event: Record<string, unknown>): Array<Record<string, unknown>> {
+  return (event.message as { content?: Array<Record<string, unknown>> })?.content ?? [];
+}
+
 function inputPreview(input: Record<string, unknown>): string {
   const val = input.file_path ?? input.command ?? input.pattern ?? Object.values(input)[0];
   if (typeof val !== "string") return "";
@@ -90,8 +99,7 @@ function processEvent(chatId: string, event: Record<string, unknown>) {
   const msg = activeMessages.get(chatId);
 
   if (event.type === "assistant" && msg) {
-    const content = (event.message as { content?: Array<Record<string, unknown>> }).content ?? [];
-    for (const block of content) {
+    for (const block of contentBlocks(event)) {
       if (block.type === "text") {
         const text = block.text as string;
         msg.content += text;
@@ -107,8 +115,7 @@ function processEvent(chatId: string, event: Record<string, unknown>) {
       }
     }
   } else if (event.type === "user" && msg) {
-    const content = (event.message as { content?: Array<Record<string, unknown>> }).content ?? [];
-    for (const block of content) {
+    for (const block of contentBlocks(event)) {
       if (block.type === "tool_result") {
         const toolId = block.tool_use_id as string;
         const raw = block.content;
@@ -143,14 +150,9 @@ function ensureProcess(chatId: string, worktreePath: string): ChildProcessWithou
   if (existing) return existing;
 
   const chat = chats.get(chatId);
-  const shell = process.env.SHELL ?? "/bin/zsh";
   const resumeFlag = chat?.sessionId ? `--resume "${chat.sessionId}"` : "";
   const script = `claude --output-format stream-json --verbose --dangerously-skip-permissions ${resumeFlag}`;
-
-  const proc = spawn(shell, ["-lc", script], {
-    cwd: worktreePath,
-    env: { ...process.env },
-  }) as ChildProcessWithoutNullStreams;
+  const proc = spawnShell(script, worktreePath);
 
   buffers.set(chatId, "");
 
@@ -234,11 +236,7 @@ export function fetchSlashCommands(worktreePath: string): Promise<Array<{ name: 
   if (cachedCommands) return Promise.resolve(cachedCommands);
 
   return new Promise((resolve) => {
-    const shell = process.env.SHELL ?? "/bin/zsh";
-    const proc = spawn(shell, ["-lc", "claude --output-format stream-json --dangerously-skip-permissions"], {
-      cwd: worktreePath,
-      env: { ...process.env },
-    }) as ChildProcessWithoutNullStreams;
+    const proc = spawnShell("claude --output-format stream-json --dangerously-skip-permissions", worktreePath);
 
     let buf = "";
     let helpText = "";
