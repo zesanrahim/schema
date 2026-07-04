@@ -1,0 +1,334 @@
+import { useState, useEffect, useRef } from "react";
+import type { Chat, Message, ToolCall } from "../shared/types";
+
+interface Props {
+  chat: Chat;
+  worktreeBranch: string;
+  onNewChat: () => void;
+  onDeleteChat: (id: string) => void;
+  chatList: Chat[];
+  onSelectChat: (id: string) => void;
+}
+
+function toolPreview(tool: ToolCall): string {
+  const val = tool.input.file_path ?? tool.input.command ?? tool.input.pattern ?? Object.values(tool.input)[0];
+  if (typeof val !== "string") return "";
+  return val.length > 50 ? val.slice(0, 50) + "…" : val;
+}
+
+function ToolCalls({ toolCalls }: { toolCalls: ToolCall[] }) {
+  const [expanded, setExpanded] = useState(false);
+  if (toolCalls.length === 0) return null;
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        style={{
+          background: "none",
+          border: "1px solid var(--border-2)",
+          color: "var(--text-2)",
+          padding: "3px 8px",
+          fontSize: 11,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+        }}
+      >
+        <span style={{ fontSize: 9 }}>{expanded ? "▼" : "▸"}</span>
+        {toolCalls.length} tool call{toolCalls.length !== 1 ? "s" : ""}
+      </button>
+      {expanded && (
+        <div style={{
+          borderLeft: "1px solid var(--border-2)",
+          marginTop: 4,
+          marginLeft: 4,
+          paddingLeft: 10,
+          display: "flex",
+          flexDirection: "column",
+          gap: 3,
+        }}>
+          {toolCalls.map((tc) => (
+            <div key={tc.id} style={{ fontSize: 11, color: "var(--text-2)" }}>
+              <span style={{ color: "var(--text)" }}>{tc.name}</span>
+              {toolPreview(tc) && (
+                <span style={{ color: "var(--text-3)", marginLeft: 6 }}>{toolPreview(tc)}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MessageBubble({ msg }: { msg: Message }) {
+  const isUser = msg.role === "user";
+  return (
+    <div style={{
+      display: "flex",
+      flexDirection: "column",
+      alignItems: isUser ? "flex-end" : "flex-start",
+      marginBottom: 16,
+    }}>
+      <div style={{
+        fontSize: 10,
+        color: "var(--text-3)",
+        marginBottom: 4,
+        letterSpacing: "0.05em",
+        textTransform: "uppercase",
+      }}>
+        {isUser ? "You" : "Claude"}
+      </div>
+      <div style={{
+        maxWidth: "80%",
+        background: isUser ? "var(--accent-dim)" : "var(--surface-2)",
+        border: `1px solid ${isUser ? "var(--accent)" : "var(--border)"}`,
+        padding: "10px 14px",
+        fontSize: 13,
+        lineHeight: 1.6,
+        color: "var(--text)",
+      }}>
+        {!isUser && <ToolCalls toolCalls={msg.toolCalls} />}
+        <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+          {msg.content || (!msg.done && <span style={{ color: "var(--text-3)" }}>thinking…</span>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function ChatView({ chat, worktreeBranch, onNewChat, onDeleteChat, chatList, onSelectChat }: Props) {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    window.api.invoke("chat:messages", { chatId: chat.id }).then(setMessages);
+    setSending(false);
+
+    const unsubDelta = window.api.on("chat:delta", ({ chatId, messageId, text }) => {
+      if (chatId !== chat.id) return;
+      setMessages((prev) => prev.map((m) =>
+        m.id === messageId ? { ...m, content: m.content + text } : m
+      ));
+    });
+
+    const unsubToolStart = window.api.on("chat:tool-start", ({ chatId, messageId, tool }) => {
+      if (chatId !== chat.id) return;
+      setMessages((prev) => prev.map((m) =>
+        m.id === messageId ? { ...m, toolCalls: [...m.toolCalls, tool] } : m
+      ));
+    });
+
+    const unsubToolDone = window.api.on("chat:tool-done", ({ chatId, messageId, toolId, output }) => {
+      if (chatId !== chat.id) return;
+      setMessages((prev) => prev.map((m) =>
+        m.id === messageId
+          ? { ...m, toolCalls: m.toolCalls.map((t) => t.id === toolId ? { ...t, output } : t) }
+          : m
+      ));
+    });
+
+    const unsubDone = window.api.on("chat:done", ({ chatId }) => {
+      if (chatId !== chat.id) return;
+      setMessages((prev) => prev.map((m) => m.done ? m : { ...m, done: true }));
+      setSending(false);
+    });
+
+    const unsubError = window.api.on("chat:error", ({ chatId, error }) => {
+      if (chatId !== chat.id) return;
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: "assistant", content: `Error: ${error}`, toolCalls: [], timestamp: Date.now(), done: true },
+      ]);
+      setSending(false);
+    });
+
+    return () => { unsubDelta(); unsubToolStart(); unsubToolDone(); unsubDone(); unsubError(); };
+  }, [chat.id]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  async function send() {
+    const text = input.trim();
+    if (!text || sending) return;
+    setInput("");
+    setSending(true);
+    const optimistic: Message = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: text,
+      toolCalls: [],
+      timestamp: Date.now(),
+      done: true,
+    };
+    const placeholder: Message = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      content: "",
+      toolCalls: [],
+      timestamp: Date.now(),
+      done: false,
+    };
+    setMessages((prev) => [...prev, optimistic, placeholder]);
+    await window.api.invoke("chat:send", { chatId: chat.id, message: text });
+  }
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "0 16px",
+        height: 44,
+        borderBottom: "1px solid var(--border)",
+        flexShrink: 0,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 12, color: "var(--text-2)" }}>{worktreeBranch}</span>
+          <span style={{ color: "var(--text-3)" }}>/</span>
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setShowHistory((v) => !v)}
+              style={{
+                background: "none",
+                border: "none",
+                color: "var(--text)",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                padding: 0,
+              }}
+            >
+              {chat.title}
+              <span style={{ fontSize: 9, color: "var(--text-3)" }}>▾</span>
+            </button>
+            {showHistory && (
+              <div style={{
+                position: "absolute",
+                top: "calc(100% + 6px)",
+                left: 0,
+                background: "var(--surface)",
+                border: "1px solid var(--border)",
+                minWidth: 220,
+                zIndex: 10,
+                boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+              }}>
+                {chatList.map((c) => (
+                  <div
+                    key={c.id}
+                    onClick={() => { onSelectChat(c.id); setShowHistory(false); }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "8px 12px",
+                      background: c.id === chat.id ? "var(--accent-dim)" : "none",
+                      cursor: "pointer",
+                      fontSize: 12,
+                      color: c.id === chat.id ? "var(--text)" : "var(--text-2)",
+                    }}
+                  >
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+                      {c.title}
+                    </span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onDeleteChat(c.id); }}
+                      style={{ background: "none", border: "none", color: "var(--text-3)", fontSize: 13, padding: "0 2px", marginLeft: 8 }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        <button
+          onClick={onNewChat}
+          style={{
+            background: "none",
+            border: "1px solid var(--border-2)",
+            color: "var(--text-2)",
+            padding: "4px 10px",
+            fontSize: 11,
+          }}
+        >
+          + New chat
+        </button>
+      </div>
+
+      <div style={{ flex: 1, overflowY: "auto", padding: "24px 20px" }} onClick={() => setShowHistory(false)}>
+        {messages.length === 0 && (
+          <div style={{
+            height: "100%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "var(--text-3)",
+            fontSize: 12,
+          }}>
+            start a conversation
+          </div>
+        )}
+        {messages.map((msg) => <MessageBubble key={msg.id} msg={msg} />)}
+        <div ref={bottomRef} />
+      </div>
+
+      <div style={{
+        padding: "12px 16px",
+        borderTop: "1px solid var(--border)",
+        flexShrink: 0,
+      }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+            }}
+            placeholder="Message Claude… (Enter to send, Shift+Enter for newline)"
+            rows={1}
+            style={{
+              flex: 1,
+              background: "var(--surface-2)",
+              border: "1px solid var(--border)",
+              color: "var(--text)",
+              padding: "8px 10px",
+              fontSize: 12,
+              resize: "none",
+              outline: "none",
+              lineHeight: 1.5,
+              fontFamily: "inherit",
+              maxHeight: 120,
+              overflow: "auto",
+            }}
+            disabled={sending}
+          />
+          <button
+            onClick={send}
+            disabled={sending || !input.trim()}
+            style={{
+              background: sending || !input.trim() ? "none" : "var(--accent-dim)",
+              border: "1px solid var(--border-2)",
+              color: sending || !input.trim() ? "var(--text-3)" : "var(--accent)",
+              padding: "8px 14px",
+              fontSize: 12,
+              flexShrink: 0,
+            }}
+          >
+            {sending ? "…" : "Send"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

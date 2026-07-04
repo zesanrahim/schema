@@ -18,11 +18,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0",
     "dotenv": "^17.4.2",
     "electron": "^36.3.1",
-    "node-pty": "^1.1.0",
     "path-browserify": "^1.0.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"

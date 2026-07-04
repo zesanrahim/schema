@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import type { Repo, Worktree, Agent, LogLine } from "../shared/types";
-import { Terminal } from "./Terminal";
+import type { Repo, Worktree, Chat } from "../shared/types";
+import { ChatView } from "./ChatView";
 import { Settings } from "./Settings";
 
 type View = "main" | "settings";
@@ -34,24 +34,45 @@ export function App() {
   const [view, setView] = useState<View>("main");
   const [repos, setRepos] = useState<Repo[]>([]);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [logs, setLogs] = useState<LogLine[]>([]);
   const [selectedWorktreeId, setSelectedWorktreeId] = useState<string | null>(null);
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [pushing, setPushing] = useState<string | null>(null);
-  const [spawnCommand] = useState(() => localStorage.getItem("lastCommand") ?? "claude --dangerously-skip-permissions");
 
   useEffect(() => {
     window.api.invoke("repo:list").then(setRepos);
     window.api.invoke("worktree:list").then(setWorktrees);
-    window.api.invoke("agent:list").then(setAgents);
-
-    const unsubLog = window.api.on("log:line", (line) => setLogs((prev) => [...prev, line]));
-    const unsubStatus = window.api.on("agent:status", ({ id, status }) => {
-      setAgents((prev) => prev.map((a) => (a.id === id ? { ...a, status } : a)));
-    });
-
-    return () => { unsubLog(); unsubStatus(); };
   }, []);
+
+  useEffect(() => {
+    if (!selectedWorktreeId) return;
+    window.api.invoke("chat:list", { worktreeId: selectedWorktreeId }).then((list) => {
+      setChats(list);
+      if (list.length > 0 && list[0]) {
+        setActiveChatId(list[0].id);
+      } else {
+        createChat(selectedWorktreeId);
+      }
+    });
+  }, [selectedWorktreeId]);
+
+  async function createChat(worktreeId: string) {
+    const chat = await window.api.invoke("chat:create", { worktreeId });
+    setChats((prev) => [chat, ...prev]);
+    setActiveChatId(chat.id);
+  }
+
+  async function deleteChat(id: string) {
+    await window.api.invoke("chat:delete", { id });
+    setChats((prev) => {
+      const next = prev.filter((c) => c.id !== id);
+      if (activeChatId === id) {
+        setActiveChatId(next[0]?.id ?? null);
+        if (next.length === 0 && selectedWorktreeId) createChat(selectedWorktreeId);
+      }
+      return next;
+    });
+  }
 
   async function addRepo() {
     try {
@@ -64,10 +85,9 @@ export function App() {
   async function removeRepo(id: string) {
     await window.api.invoke("repo:remove", { id });
     setRepos((prev) => prev.filter((r) => r.id !== id));
+    const removed = worktrees.filter((w) => w.repoId === id).map((w) => w.id);
     setWorktrees((prev) => prev.filter((w) => w.repoId !== id));
-    if (worktrees.find((w) => w.id === selectedWorktreeId)?.repoId === id) {
-      setSelectedWorktreeId(null);
-    }
+    if (removed.includes(selectedWorktreeId ?? "")) setSelectedWorktreeId(null);
   }
 
   async function createWorktree(repoId: string) {
@@ -83,20 +103,6 @@ export function App() {
     if (selectedWorktreeId === id) setSelectedWorktreeId(null);
   }
 
-  async function spawnAgent(worktreeId: string) {
-    localStorage.setItem("lastCommand", spawnCommand);
-    const agent = await window.api.invoke("agent:spawn", {
-      worktreeId,
-      command: spawnCommand.split(" "),
-    });
-    setAgents((prev) => [...prev, agent]);
-  }
-
-  async function killAgent(id: string) {
-    await window.api.invoke("agent:kill", { id });
-    setAgents((prev) => prev.map((a) => (a.id === id ? { ...a, status: "stopped" as const } : a)));
-  }
-
   async function commitAndPush(worktreeId: string) {
     setPushing(worktreeId);
     try {
@@ -107,8 +113,7 @@ export function App() {
   }
 
   const selectedWorktree = worktrees.find((w) => w.id === selectedWorktreeId) ?? null;
-  const activeAgent = agents.find((a) => a.worktreeId === selectedWorktreeId && a.status === "running") ?? null;
-  const agentLogs = activeAgent ? logs.filter((l) => l.agentId === activeAgent.id) : [];
+  const activeChat = chats.find((c) => c.id === activeChatId) ?? null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
@@ -123,20 +128,38 @@ export function App() {
         background: "var(--surface)",
       }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", letterSpacing: "0.04em" }}>schema</span>
-        <button
-          onClick={() => setView(view === "settings" ? "main" : "settings")}
-          style={{
-            background: view === "settings" ? "var(--accent-dim)" : "none",
-            border: view === "settings" ? "1px solid var(--accent)" : "1px solid transparent",
-            color: view === "settings" ? "var(--accent)" : "var(--text-2)",
-            padding: "5px 7px",
-            display: "flex",
-            alignItems: "center",
-          }}
-          title="Settings"
-        >
-          <IconSettings />
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {selectedWorktreeId && (
+            <button
+              onClick={() => commitAndPush(selectedWorktreeId)}
+              disabled={pushing === selectedWorktreeId}
+              style={{
+                background: "none",
+                border: "1px solid var(--border-2)",
+                color: pushing === selectedWorktreeId ? "var(--text-3)" : "var(--text-2)",
+                padding: "4px 10px",
+                fontSize: 11,
+                opacity: pushing === selectedWorktreeId ? 0.5 : 1,
+              }}
+            >
+              {pushing === selectedWorktreeId ? "Pushing…" : "↑ Commit & Push"}
+            </button>
+          )}
+          <button
+            onClick={() => setView(view === "settings" ? "main" : "settings")}
+            style={{
+              background: view === "settings" ? "var(--accent-dim)" : "none",
+              border: view === "settings" ? "1px solid var(--accent)" : "1px solid transparent",
+              color: view === "settings" ? "var(--accent)" : "var(--text-2)",
+              padding: "5px 7px",
+              display: "flex",
+              alignItems: "center",
+            }}
+            title="Settings"
+          >
+            <IconSettings />
+          </button>
+        </div>
       </div>
 
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
@@ -210,7 +233,6 @@ export function App() {
                   </div>
 
                   {repoWorktrees.map((wt) => {
-                    const agent = agents.find((a) => a.worktreeId === wt.id);
                     const isSelected = selectedWorktreeId === wt.id;
                     return (
                       <div
@@ -226,7 +248,6 @@ export function App() {
                           cursor: "pointer",
                         }}
                       >
-                        <span className={`status-dot ${agent?.status ?? "idle"}`} />
                         <span style={{
                           fontSize: 12,
                           color: isSelected ? "var(--text)" : "var(--text-2)",
@@ -250,7 +271,6 @@ export function App() {
                               lineHeight: 1,
                               opacity: isSelected ? 1 : 0,
                             }}
-                            title="Remove worktree"
                           >
                             ×
                           </button>
@@ -286,72 +306,15 @@ export function App() {
 
         {view === "settings" ? (
           <Settings onBack={() => setView("main")} />
-        ) : selectedWorktree && !activeAgent ? (
-          <div style={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 12,
-          }}>
-            <span style={{ fontSize: 12, color: "var(--text-3)" }}>{selectedWorktree.branch}</span>
-            <button
-              onClick={() => spawnAgent(selectedWorktree.id)}
-              style={{
-                background: "var(--accent-dim)",
-                border: "1px solid var(--accent)",
-                color: "var(--accent)",
-                padding: "8px 18px",
-                fontSize: 13,
-              }}
-            >
-              ▶ Start agent
-            </button>
-          </div>
-        ) : activeAgent ? (
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            <div style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "0 14px",
-              height: 36,
-              borderBottom: "1px solid var(--border)",
-              flexShrink: 0,
-            }}>
-              <span style={{ fontSize: 11, color: "var(--text-2)" }}>{selectedWorktree?.branch}</span>
-              <div style={{ display: "flex", gap: 6 }}>
-                <button
-                  onClick={() => commitAndPush(activeAgent.worktreeId)}
-                  disabled={pushing === activeAgent.worktreeId}
-                  style={{
-                    background: "none",
-                    border: "1px solid var(--border-2)",
-                    color: pushing === activeAgent.worktreeId ? "var(--text-3)" : "var(--accent)",
-                    padding: "3px 8px",
-                    fontSize: 11,
-                    opacity: pushing === activeAgent.worktreeId ? 0.5 : 1,
-                  }}
-                >
-                  {pushing === activeAgent.worktreeId ? "Pushing…" : "↑ Commit & Push"}
-                </button>
-                <button
-                  onClick={() => killAgent(activeAgent.id)}
-                  style={{
-                    background: "none",
-                    border: "1px solid var(--border-2)",
-                    color: "var(--red)",
-                    padding: "3px 8px",
-                    fontSize: 11,
-                  }}
-                >
-                  ■ Kill
-                </button>
-              </div>
-            </div>
-            <Terminal agentId={activeAgent.id} logs={agentLogs} />
-          </div>
+        ) : selectedWorktree && activeChat ? (
+          <ChatView
+            chat={activeChat}
+            worktreeBranch={selectedWorktree.branch}
+            chatList={chats}
+            onNewChat={() => createChat(selectedWorktree.id)}
+            onDeleteChat={deleteChat}
+            onSelectChat={setActiveChatId}
+          />
         ) : (
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <span style={{ fontSize: 12, color: "var(--text-3)" }}>select a worktree</span>

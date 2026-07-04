@@ -2,16 +2,15 @@ import { app, BrowserWindow, ipcMain, globalShortcut, dialog } from "electron";
 import path from "path";
 import fs from "fs";
 import { execSync } from "child_process";
-import * as pty from "node-pty";
-import type { IpcInvoke, IpcEvents, Repo, Worktree, Agent, AgentStatus } from "../shared/types";
+import type { IpcInvoke, IpcEvents, Repo, Worktree } from "../shared/types";
+
 import { clearToken, startDeviceFlow, pollForToken, getAuthStatus } from "./github";
+import { chats as chatStore, loadChats, createChat, listChats, deleteChat, getMessages, sendMessage } from "./chat";
 
 const dev = process.env.NODE_ENV !== "production";
 
 const repos = new Map<string, Repo>();
 const worktrees = new Map<string, Worktree>();
-const agents = new Map<string, Agent>();
-const processes = new Map<string, pty.IPty>();
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -95,13 +94,9 @@ handle("repo:add", async () => {
   });
   if (result.canceled || !result.filePaths[0]) throw new Error("Canceled");
   const repoPath = result.filePaths[0];
-
-  try {
-    execSync("git rev-parse --git-dir", { cwd: repoPath, stdio: "ignore" });
-  } catch {
+  try { execSync("git rev-parse --git-dir", { cwd: repoPath, stdio: "ignore" }); } catch {
     throw new Error("Not a git repository");
   }
-
   const repo: Repo = { id: crypto.randomUUID(), name: path.basename(repoPath), path: repoPath };
   repos.set(repo.id, repo);
   saveRepos();
@@ -146,64 +141,34 @@ handle("worktree:remove", ({ id }) => {
 handle("worktree:commit-push", ({ id }) => {
   const wt = worktrees.get(id);
   if (!wt) throw new Error(`Worktree ${id} not found`);
-
   execSync("git add -A", { cwd: wt.path });
-
   const stat = execSync("git diff --cached --stat", { cwd: wt.path }).toString().trim();
   if (!stat) throw new Error("Nothing to commit");
-
   const lines = stat.split("\n");
   const summary = lines.at(-1)?.trim() ?? "";
   const changed = lines.slice(0, -1).map((l) => l.trim().split(" ")[0]);
   const commitMessage = changed.length === 1
     ? `update ${changed[0]}`
     : `update ${changed.length} files (${summary})`;
-
   execSync(`git commit -m "${commitMessage}"`, { cwd: wt.path });
   execSync("git push", { cwd: wt.path });
-
   return { commitMessage };
 });
 
-handle("agent:spawn", ({ worktreeId, command }) => {
-  const wt = worktrees.get(worktreeId);
-  if (!wt) throw new Error(`Worktree ${worktreeId} not found`);
+handle("chat:create", ({ worktreeId }) => createChat(worktreeId));
+handle("chat:list", ({ worktreeId }) => listChats(worktreeId));
+handle("chat:delete", ({ id }) => deleteChat(id));
+handle("chat:messages", ({ chatId }) => getMessages(chatId));
 
-  const agent: Agent = { id: crypto.randomUUID(), worktreeId, command, status: "running", startedAt: Date.now() };
-  const shell = process.env.SHELL ?? "/bin/zsh";
-  const proc = pty.spawn(shell, ["-lc", command.join(" ")], {
-    cwd: wt.path,
-    env: { ...process.env },
-    cols: 220,
-    rows: 50,
+handle("chat:send", ({ chatId, message }) => {
+  const chat = chatStore.get(chatId);
+  if (!chat) throw new Error(`Chat ${chatId} not found`);
+  const wt = worktrees.get(chat.worktreeId);
+  if (!wt) throw new Error("Worktree not found for chat");
+  sendMessage(chatId, message, wt.path, (channel, payload) => {
+    mainWindow?.webContents.send(channel, payload);
   });
-
-  processes.set(agent.id, proc);
-  agents.set(agent.id, agent);
-
-  proc.onData((data) => send("log:line", { agentId: agent.id, data, timestamp: Date.now() }));
-
-  proc.onExit(({ exitCode }) => {
-    const status: AgentStatus = exitCode === 0 ? "stopped" : "error";
-    const a = agents.get(agent.id);
-    if (a) a.status = status;
-    send("agent:status", { id: agent.id, status });
-    processes.delete(agent.id);
-  });
-
-  return agent;
 });
-
-handle("agent:kill", ({ id }) => {
-  processes.get(id)?.kill("SIGTERM");
-  processes.delete(id);
-  const agent = agents.get(id);
-  if (agent) agent.status = "stopped";
-});
-
-handle("agent:list", () => Array.from(agents.values()));
-handle("agent:input", ({ id, data }) => { processes.get(id)?.write(data); });
-handle("agent:resize", ({ id, cols, rows }) => { processes.get(id)?.resize(cols, rows); });
 
 handle("github:auth-start", () => startDeviceFlow());
 handle("github:auth-poll", () => pollForToken());
@@ -212,6 +177,7 @@ handle("github:auth-disconnect", () => { clearToken(); });
 
 app.whenReady().then(() => {
   initRepos();
+  loadChats();
   createWindow();
   globalShortcut.register("CommandOrControl+R", () => {
     app.relaunch();

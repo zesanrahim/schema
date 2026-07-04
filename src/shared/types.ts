@@ -1,5 +1,3 @@
-export type AgentStatus = "running" | "stopped" | "error";
-
 export interface Repo {
   id: string;
   name: string;
@@ -14,18 +12,28 @@ export interface Worktree {
   isMain: boolean;
 }
 
-export interface Agent {
+export interface ToolCall {
   id: string;
-  worktreeId: string;
-  command: string[];
-  status: AgentStatus;
-  startedAt: number;
+  name: string;
+  input: Record<string, unknown>;
+  output?: string;
 }
 
-export interface LogLine {
-  agentId: string;
-  data: string;
+export interface Message {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  toolCalls: ToolCall[];
   timestamp: number;
+  done: boolean;
+}
+
+export interface Chat {
+  id: string;
+  worktreeId: string;
+  sessionId: string | null;
+  title: string;
+  createdAt: number;
 }
 
 export interface GitHubUser {
@@ -46,14 +54,17 @@ export interface IpcInvoke {
   "worktree:list": { args: void; result: Worktree[] };
   "worktree:remove": { args: { id: string }; result: void };
   "worktree:commit-push": { args: { id: string }; result: { commitMessage: string } };
-  "agent:spawn": { args: { worktreeId: string; command: string[] }; result: Agent };
-  "agent:kill": { args: { id: string }; result: void };
-  "agent:list": { args: void; result: Agent[] };
-  "agent:input": { args: { id: string; data: string }; result: void };
-  "agent:resize": { args: { id: string; cols: number; rows: number }; result: void };
+  "chat:create": { args: { worktreeId: string }; result: Chat };
+  "chat:list": { args: { worktreeId: string }; result: Chat[] };
+  "chat:delete": { args: { id: string }; result: void };
+  "chat:messages": { args: { chatId: string }; result: Message[] };
+  "chat:send": { args: { chatId: string; message: string }; result: void };
 }
 
 export interface IpcEvents {
-  "log:line": LogLine;
-  "agent:status": { id: string; status: AgentStatus };
+  "chat:delta": { chatId: string; messageId: string; text: string };
+  "chat:tool-start": { chatId: string; messageId: string; tool: Omit<ToolCall, "output"> };
+  "chat:tool-done": { chatId: string; messageId: string; toolId: string; output: string };
+  "chat:done": { chatId: string; messageId: string };
+  "chat:error": { chatId: string; error: string };
 }
