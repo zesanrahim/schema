@@ -5,7 +5,7 @@ declare global {
     api: {
       invoke<K extends keyof IpcInvoke>(
         channel: K,
-        args: IpcInvoke[K]["args"]
+        ...args: IpcInvoke[K]["args"] extends void ? [] : [IpcInvoke[K]["args"]]
       ): Promise<IpcInvoke[K]["result"]>;
       on<K extends keyof IpcEvents>(
         channel: K,

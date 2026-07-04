@@ -1,0 +1,50 @@
+:root {
+  --bg: #080808;
+  --surface: #111111;
+  --surface-2: #1a1a1a;
+  --surface-3: #222222;
+  --border: #252525;
+  --border-2: #333333;
+  --text: #e2e2e2;
+  --text-2: #888888;
+  --text-3: #3a3a3a;
+  --accent: #8b7cf8;
+  --accent-dim: rgba(139, 124, 248, 0.12);
+  --red: #e05252;
+  --red-dim: rgba(224, 82, 82, 0.1);
+  --green: #4ade80;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: "SF Mono", ui-monospace, "Cascadia Code", "Fira Code", monospace;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  overflow: hidden;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+button { font-family: inherit; cursor: pointer; }
+input, select { font-family: inherit; }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-dot.running {
+  background: var(--green);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+.status-dot.stopped { background: var(--text-3); }
+.status-dot.error { background: var(--red); }
+.status-dot.idle { background: var(--text-3); }

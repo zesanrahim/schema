@@ -3,6 +3,7 @@ import path from "path";
 import { execSync } from "child_process";
 import * as pty from "node-pty";
 import type { IpcInvoke, IpcEvents, Worktree, Agent, AgentStatus } from "../shared/types";
+import { clearToken, startDeviceFlow, pollForToken, getAuthStatus } from "./github";
 
 const dev = process.env.NODE_ENV !== "production";
 const repoRoot = process.cwd();
@@ -143,6 +144,11 @@ handle("agent:input", ({ id, data }) => {
 handle("agent:resize", ({ id, cols, rows }) => {
   processes.get(id)?.resize(cols, rows);
 });
+
+handle("github:auth-start", () => startDeviceFlow());
+handle("github:auth-poll", () => pollForToken());
+handle("github:auth-status", () => getAuthStatus());
+handle("github:auth-disconnect", () => { clearToken(); });
 
 app.whenReady().then(() => {
   loadWorktreesFromGit();

@@ -20,7 +20,17 @@ export interface LogLine {
   timestamp: number;
 }
 
+export interface GitHubUser {
+  login: string;
+  name: string | null;
+  avatarUrl: string;
+}
+
 export interface IpcInvoke {
+  "github:auth-start": { args: void; result: { userCode: string; verificationUri: string } };
+  "github:auth-poll": { args: void; result: GitHubUser };
+  "github:auth-status": { args: void; result: GitHubUser | null };
+  "github:auth-disconnect": { args: void; result: void };
   "worktree:create": { args: { branch: string }; result: Worktree };
   "worktree:list": { args: void; result: Worktree[] };
   "worktree:remove": { args: { id: string }; result: void };
