@@ -7,6 +7,7 @@ import type { IpcInvoke, IpcEvents, Repo, Worktree } from "../shared/types";
 import { clearToken, startDeviceFlow, pollForToken, getAuthStatus } from "./github";
 import { chats as chatStore, loadChats, createChat, listChats, deleteChat, getMessages, sendMessage, setSender, killAllProcesses, fetchSlashCommands } from "./chat";
 import { createTerminal, writeTerminal, resizeTerminal, destroyTerminal, killAllTerminals, setTerminalSender } from "./terminal";
+import { getWorkspace, startWorkspace, stopWorkspace, killAllWorkspaces, setWorkspaceSender } from "./workspace";
 
 const dev = process.env.NODE_ENV !== "production";
 
@@ -173,6 +174,46 @@ handle("chat:send", ({ chatId, message }) => {
   sendMessage(chatId, message, wt.path);
 });
 
+handle("repo:set-dev-command", ({ id, command }) => {
+  const repo = repos.get(id);
+  if (!repo) throw new Error(`Repo ${id} not found`);
+  repo.devCommand = command;
+  saveRepos();
+});
+
+handle("workspace:start", ({ worktreeId }) => {
+  const wt = worktrees.get(worktreeId);
+  if (!wt) throw new Error(`Worktree ${worktreeId} not found`);
+  const repo = repos.get(wt.repoId);
+  if (!repo?.devCommand) throw new Error("No dev command set for this repo");
+  startWorkspace(worktreeId, wt.path, repo.devCommand);
+});
+handle("workspace:stop", ({ worktreeId }) => stopWorkspace(worktreeId));
+handle("workspace:get", ({ worktreeId }) => getWorkspace(worktreeId));
+
+handle("worktree:diff", ({ id, filePath }) => {
+  const wt = worktrees.get(id);
+  if (!wt) throw new Error(`Worktree ${id} not found`);
+  const statusOut = execSync("git status --porcelain", { cwd: wt.path }).toString();
+  const files = statusOut.split("\n").filter(Boolean).map((line) => {
+    const code = line.slice(0, 2).trim();
+    const path = line.slice(3).trim().split(" -> ").pop() ?? "";
+    const statusMap: Record<string, "M" | "A" | "D" | "R" | "?"> = {
+      M: "M", A: "A", D: "D", R: "R", "?": "?",
+    };
+    return { path, status: statusMap[code[0] ?? "?"] ?? "M" as const };
+  });
+  const diffCmd = filePath
+    ? `git diff HEAD -- "${filePath}"`
+    : "git diff HEAD";
+  let raw = "";
+  try { raw = execSync(diffCmd, { cwd: wt.path }).toString(); } catch {}
+  if (!raw && filePath) {
+    try { raw = execSync(`git diff --cached -- "${filePath}"`, { cwd: wt.path }).toString(); } catch {}
+  }
+  return { files, raw };
+});
+
 handle("terminal:create", ({ worktreeId }) => {
   const wt = worktrees.get(worktreeId);
   if (!wt) throw new Error(`Worktree ${worktreeId} not found`);
@@ -195,11 +236,12 @@ app.whenReady().then(() => {
   createWindow();
   setSender((channel, payload) => mainWindow?.webContents.send(channel, payload));
   setTerminalSender((channel, payload) => mainWindow?.webContents.send(channel, payload));
+  setWorkspaceSender((channel, payload) => mainWindow?.webContents.send(channel, payload));
   globalShortcut.register("CommandOrControl+R", () => {
     app.relaunch();
     app.exit(0);
   });
 });
 
-app.on("window-all-closed", () => { killAllProcesses(); killAllTerminals(); if (process.platform !== "darwin") app.quit(); });
+app.on("window-all-closed", () => { killAllProcesses(); killAllTerminals(); killAllWorkspaces(); if (process.platform !== "darwin") app.quit(); });
 app.on("activate", () => { if (mainWindow === null) createWindow(); });
