@@ -7,12 +7,7 @@ import { Settings } from "./Settings";
 import { IconSettings, IconPlus } from "./icons";
 
 type View = "main" | "settings";
-type Pane = "chat" | "diff";
-
-const PANES: { key: Pane; label: string }[] = [
-  { key: "chat", label: "Chat" },
-  { key: "diff", label: "Diff" },
-];
+type DiffOverlay = { worktreeId: string; filePath: string };
 
 function generateBranch() {
   const now = new Date();
@@ -33,7 +28,7 @@ function IconPanel() {
 
 export function App() {
   const [view, setView] = useState<View>("main");
-  const [pane, setPane] = useState<Pane>("chat");
+  const [diffOverlay, setDiffOverlay] = useState<DiffOverlay | null>(null);
   const [rightOpen, setRightOpen] = useState(true);
   const [repos, setRepos] = useState<Repo[]>([]);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
@@ -333,41 +328,8 @@ export function App() {
           <Settings onBack={() => setView("main")} />
         ) : selectedWorktree ? (
           <>
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-              <div style={{
-                display: "flex",
-                alignItems: "center",
-                borderBottom: "1px solid var(--border)",
-                background: "var(--surface)",
-                flexShrink: 0,
-                padding: "0 16px",
-                height: 36,
-                gap: 2,
-              }}>
-                {PANES.map(({ key, label }) => (
-                  <button
-                    key={key}
-                    onClick={() => setPane(key)}
-                    style={{
-                      background: "none",
-                      border: "none",
-                      borderBottom: pane === key ? "2px solid var(--accent)" : "2px solid transparent",
-                      color: pane === key ? "var(--text)" : "var(--text-3)",
-                      padding: "0 10px",
-                      height: "100%",
-                      fontSize: 11,
-                      fontWeight: pane === key ? 600 : 400,
-                      letterSpacing: "0.04em",
-                      textTransform: "uppercase",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-
-              {pane === "chat" && activeChat ? (
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative" }}>
+              {activeChat && (
                 <ChatView
                   chat={activeChat}
                   chatList={chats}
@@ -375,9 +337,14 @@ export function App() {
                   onDeleteChat={deleteChat}
                   onSelectChat={setActiveChatId}
                 />
-              ) : pane === "diff" ? (
-                <DiffView worktreeId={selectedWorktree.id} />
-              ) : null}
+              )}
+              {diffOverlay && diffOverlay.worktreeId === selectedWorktree.id && (
+                <DiffView
+                  worktreeId={diffOverlay.worktreeId}
+                  filePath={diffOverlay.filePath}
+                  onClose={() => setDiffOverlay(null)}
+                />
+              )}
             </div>
 
             {showRight && (
@@ -385,6 +352,7 @@ export function App() {
                 worktree={selectedWorktree}
                 repo={selectedRepo!}
                 onUpdateRepo={updateRepo}
+                onOpenDiff={(filePath) => setDiffOverlay({ worktreeId: selectedWorktree.id, filePath })}
               />
             )}
           </>
