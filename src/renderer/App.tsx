@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import type { Worktree, Agent, LogLine } from "../shared/types";
+import { Terminal } from "./Terminal";
 
 const s: Record<string, React.CSSProperties> = {
   root: { display: "flex", height: "100vh", gap: 1 },
@@ -9,7 +10,6 @@ const s: Record<string, React.CSSProperties> = {
   input: { background: "#1a1a1a", border: "1px solid #333", color: "#e0e0e0", padding: "4px 8px", fontFamily: "monospace", fontSize: 13, borderRadius: 3 },
   btn: { background: "#1e3a2f", border: "1px solid #2d5a47", color: "#4ade80", padding: "4px 10px", fontFamily: "monospace", fontSize: 12, cursor: "pointer", borderRadius: 3 },
   row: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 8px", background: "#1a1a1a", borderRadius: 3, fontSize: 12 },
-  logs: { flex: 1, padding: 12, overflowY: "auto", fontSize: 12, lineHeight: 1.6 },
 };
 
 function badgeStyle(status: string): React.CSSProperties {
@@ -20,10 +20,6 @@ function badgeStyle(status: string): React.CSSProperties {
   };
 }
 
-function logLineStyle(stream: string): React.CSSProperties {
-  return { color: stream === "stderr" ? "#f87171" : "#a3e635", whiteSpace: "pre-wrap", wordBreak: "break-all" };
-}
-
 export function App() {
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -31,11 +27,8 @@ export function App() {
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
 
   const [newBranch, setNewBranch] = useState("");
-  const [newPath, setNewPath] = useState("");
-  const [spawnWorktreeId, setSpawnWorktreeId] = useState("");
-  const [spawnCommand, setSpawnCommand] = useState("claude --dangerously-skip-permissions");
-
-  const logsRef = useRef<HTMLDivElement>(null);
+  const [spawnWorktreeId, setSpawnWorktreeId] = useState(() => localStorage.getItem("lastWorktreeId") ?? "");
+  const [spawnCommand, setSpawnCommand] = useState(() => localStorage.getItem("lastCommand") ?? "claude --dangerously-skip-permissions");
 
   useEffect(() => {
     window.api.invoke("worktree:list", undefined).then(setWorktrees);
@@ -55,18 +48,11 @@ export function App() {
     };
   }, []);
 
-  useEffect(() => {
-    if (logsRef.current) {
-      logsRef.current.scrollTop = logsRef.current.scrollHeight;
-    }
-  }, [logs]);
-
   async function createWorktree() {
-    if (!newBranch || !newPath) return;
-    const wt = await window.api.invoke("worktree:create", { branch: newBranch, path: newPath });
+    if (!newBranch) return;
+    const wt = await window.api.invoke("worktree:create", { branch: newBranch });
     setWorktrees((prev) => [...prev, wt]);
     setNewBranch("");
-    setNewPath("");
   }
 
   async function removeWorktree(id: string) {
@@ -76,6 +62,8 @@ export function App() {
 
   async function spawnAgent() {
     if (!spawnWorktreeId || !spawnCommand) return;
+    localStorage.setItem("lastWorktreeId", spawnWorktreeId);
+    localStorage.setItem("lastCommand", spawnCommand);
     const agent = await window.api.invoke("agent:spawn", {
       worktreeId: spawnWorktreeId,
       command: spawnCommand.split(" "),
@@ -89,46 +77,45 @@ export function App() {
     setAgents((prev) => prev.map((a) => (a.id === id ? { ...a, status: "stopped" as const } : a)));
   }
 
-  const visibleLogs = selectedAgent ? logs.filter((l) => l.agentId === selectedAgent) : logs;
+  const agentLogs = selectedAgent ? logs.filter((l) => l.agentId === selectedAgent) : [];
 
   return (
-    <div style={s["root"]}>
-      <div style={s["panel"]}>
-        <div style={s["section"]}>
-          <span style={s["label"]}>New Worktree</span>
-          <input style={s["input"]} placeholder="branch" value={newBranch} onChange={(e) => setNewBranch(e.target.value)} />
-          <input style={s["input"]} placeholder="/path/to/worktree" value={newPath} onChange={(e) => setNewPath(e.target.value)} />
-          <button style={s["btn"]} onClick={createWorktree}>+ Create</button>
+    <div style={s.root}>
+      <div style={s.panel}>
+        <div style={s.section}>
+          <span style={s.label}>New Worktree</span>
+          <input style={s.input} placeholder="branch name" value={newBranch} onChange={(e) => setNewBranch(e.target.value)} />
+          <button style={s.btn} onClick={createWorktree}>+ Create</button>
         </div>
 
-        <div style={s["section"]}>
-          <span style={s["label"]}>Worktrees</span>
+        <div style={s.section}>
+          <span style={s.label}>Worktrees</span>
           {worktrees.map((wt) => (
-            <div key={wt.id} style={s["row"]}>
+            <div key={wt.id} style={s.row}>
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{wt.branch}</span>
-              <button style={{ ...s["btn"], background: "#3a1e1e", borderColor: "#5a2d2d", color: "#f87171" }} onClick={() => removeWorktree(wt.id)}>×</button>
+              <button style={{ ...s.btn, background: "#3a1e1e", borderColor: "#5a2d2d", color: "#f87171" }} onClick={() => removeWorktree(wt.id)}>×</button>
             </div>
           ))}
         </div>
 
-        <div style={s["section"]}>
-          <span style={s["label"]}>Spawn Agent</span>
-          <select style={s["input"]} value={spawnWorktreeId} onChange={(e) => setSpawnWorktreeId(e.target.value)}>
+        <div style={s.section}>
+          <span style={s.label}>Spawn Agent</span>
+          <select style={s.input} value={spawnWorktreeId} onChange={(e) => setSpawnWorktreeId(e.target.value)}>
             <option value="">select worktree</option>
             {worktrees.map((wt) => (
               <option key={wt.id} value={wt.id}>{wt.branch}</option>
             ))}
           </select>
-          <input style={s["input"]} value={spawnCommand} onChange={(e) => setSpawnCommand(e.target.value)} />
-          <button style={s["btn"]} onClick={spawnAgent}>▶ Spawn</button>
+          <input style={s.input} value={spawnCommand} onChange={(e) => setSpawnCommand(e.target.value)} />
+          <button style={s.btn} onClick={spawnAgent}>▶ Spawn</button>
         </div>
 
-        <div style={s["section"]}>
-          <span style={s["label"]}>Agents</span>
+        <div style={s.section}>
+          <span style={s.label}>Agents</span>
           {agents.map((agent) => (
             <div
               key={agent.id}
-              style={{ ...s["row"], cursor: "pointer", outline: selectedAgent === agent.id ? "1px solid #2d5a47" : "none" }}
+              style={{ ...s.row, cursor: "pointer", outline: selectedAgent === agent.id ? "1px solid #2d5a47" : "none" }}
               onClick={() => setSelectedAgent(agent.id === selectedAgent ? null : agent.id)}
             >
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>
@@ -137,7 +124,7 @@ export function App() {
               <span style={badgeStyle(agent.status)}>{agent.status}</span>
               {agent.status === "running" && (
                 <button
-                  style={{ ...s["btn"], marginLeft: 4, background: "#3a1e1e", borderColor: "#5a2d2d", color: "#f87171" }}
+                  style={{ ...s.btn, marginLeft: 4, background: "#3a1e1e", borderColor: "#5a2d2d", color: "#f87171" }}
                   onClick={(e) => { e.stopPropagation(); killAgent(agent.id); }}
                 >■</button>
               )}
@@ -146,14 +133,7 @@ export function App() {
         </div>
       </div>
 
-      <div ref={logsRef} style={s["logs"]}>
-        {visibleLogs.length === 0 && (
-          <span style={{ color: "#444" }}>no output{selectedAgent ? " for selected agent" : ""}</span>
-        )}
-        {visibleLogs.map((line, i) => (
-          <div key={i} style={logLineStyle(line.stream)}>{line.data}</div>
-        ))}
-      </div>
+      <Terminal agentId={selectedAgent} logs={agentLogs} />
     </div>
   );
 }

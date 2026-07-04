@@ -6,28 +6,34 @@
   "scripts": {
     "dev": "concurrently -k -n VITE,ELECTRON -c cyan,yellow \"bun run dev:renderer\" \"bun run dev:main\"",
     "dev:renderer": "vite",
-    "dev:main": "tsc -p src/main/tsconfig.json --outDir dist/main && electron dist/main/main/index.js",
+    "dev:main": "tsc -p src/main/tsconfig.json --outDir dist/main && tsc -p src/main/tsconfig.json --outDir dist/main -w & electron dist/main/main/index.js",
     "build": "bun run build:renderer && bun run build:main",
     "build:renderer": "vite build",
     "build:main": "tsc -p src/main/tsconfig.json --outDir dist/main",
     "pack": "bun run build && electron-builder",
-    "typecheck": "tsc -p src/main/tsconfig.json --noEmit && tsc -p src/renderer/tsconfig.json --noEmit"
+    "typecheck": "tsc -p src/main/tsconfig.json --noEmit && tsc -p src/renderer/tsconfig.json --noEmit",
+    "postinstall": "electron-rebuild -f -w node-pty"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "electron": "^36.3.1",
+    "node-pty": "^1.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.1.0",
     "@types/node": "^22.15.32",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.5.2",
     "concurrently": "^9.1.2",
     "electron-builder": "^26.0.12",
+    "nodemon": "^3.1.14",
     "playwright-core": "^1.61.1",
     "typescript": "^5.8.3",
     "vite": "^6.3.5"

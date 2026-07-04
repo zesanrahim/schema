@@ -1,14 +1,15 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, globalShortcut } from "electron";
 import path from "path";
-import { spawn } from "child_process";
 import { execSync } from "child_process";
+import * as pty from "node-pty";
 import type { IpcInvoke, IpcEvents, Worktree, Agent, AgentStatus } from "../shared/types";
 
 const dev = process.env.NODE_ENV !== "production";
+const repoRoot = process.cwd();
 
 const worktrees = new Map<string, Worktree>();
 const agents = new Map<string, Agent>();
-const processes = new Map<string, ReturnType<typeof spawn>>();
+const processes = new Map<string, pty.IPty>();
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -21,6 +22,21 @@ function handle<K extends keyof IpcInvoke>(
   handler: (args: IpcInvoke[K]["args"]) => IpcInvoke[K]["result"] | Promise<IpcInvoke[K]["result"]>
 ) {
   ipcMain.handle(channel as string, (_event, args: IpcInvoke[K]["args"]) => handler(args));
+}
+
+function loadWorktreesFromGit() {
+  const output = execSync("git worktree list --porcelain", { cwd: repoRoot }).toString();
+  const blocks = output.split("\n\n").filter(Boolean);
+  for (const block of blocks) {
+    const lines = block.split("\n");
+    const pathLine = lines.find((l) => l.startsWith("worktree "));
+    const branchLine = lines.find((l) => l.startsWith("branch "));
+    if (!pathLine) continue;
+    const worktreePath = pathLine.slice("worktree ".length);
+    const branch = branchLine ? branchLine.slice("branch refs/heads/".length) : "detached";
+    const worktree: Worktree = { id: crypto.randomUUID(), branch, path: worktreePath };
+    worktrees.set(worktree.id, worktree);
+  }
 }
 
 function createWindow() {
@@ -45,23 +61,26 @@ function createWindow() {
   });
 }
 
-handle("worktree:create", ({ branch, path: worktreePath }) => {
-  execSync(`git worktree add "${worktreePath}" -b "${branch}"`);
-  const worktree: Worktree = {
-    id: crypto.randomUUID(),
-    branch,
-    path: worktreePath,
-  };
+handle("worktree:create", ({ branch }) => {
+  const repoName = path.basename(repoRoot);
+  const slug = branch.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase();
+  const worktreePath = path.join(path.dirname(repoRoot), `${repoName}-${slug}`);
+  const branchExists = execSync(`git branch --list "${branch}"`, { cwd: repoRoot }).toString().trim() !== "";
+  const cmd = branchExists
+    ? `git worktree add "${worktreePath}" "${branch}"`
+    : `git worktree add "${worktreePath}" -b "${branch}"`;
+  execSync(cmd, { cwd: repoRoot });
+  const worktree: Worktree = { id: crypto.randomUUID(), branch, path: worktreePath };
   worktrees.set(worktree.id, worktree);
   return worktree;
 });
 
-handle("worktree:list", (_args) => Array.from(worktrees.values()));
+handle("worktree:list", () => Array.from(worktrees.values()));
 
 handle("worktree:remove", ({ id }) => {
   const worktree = worktrees.get(id);
   if (worktree) {
-    execSync(`git worktree remove "${worktree.path}"`);
+    execSync(`git worktree remove "${worktree.path}"`, { cwd: repoRoot });
     worktrees.delete(id);
   }
 });
@@ -78,26 +97,27 @@ handle("agent:spawn", ({ worktreeId, command }) => {
     startedAt: Date.now(),
   };
 
-  const [cmd, ...cmdArgs] = command;
-  const proc = spawn(cmd!, cmdArgs, { cwd: worktree.path });
+  const shell = process.env.SHELL ?? "/bin/zsh";
+  const proc = pty.spawn(shell, ["-lc", command.join(" ")], {
+    cwd: worktree.path,
+    env: { ...process.env },
+    cols: 220,
+    rows: 50,
+  });
 
   processes.set(agent.id, proc);
   agents.set(agent.id, agent);
 
-  const pipeStream = (stream: "stdout" | "stderr") => (data: Buffer) => {
+  proc.onData((data) => {
     send("log:line", {
       agentId: agent.id,
-      stream,
-      data: data.toString(),
+      data,
       timestamp: Date.now(),
     });
-  };
+  });
 
-  proc.stdout?.on("data", pipeStream("stdout"));
-  proc.stderr?.on("data", pipeStream("stderr"));
-
-  proc.on("close", (code) => {
-    const status: AgentStatus = code === 0 ? "stopped" : "error";
+  proc.onExit(({ exitCode }) => {
+    const status: AgentStatus = exitCode === 0 ? "stopped" : "error";
     const a = agents.get(agent.id);
     if (a) a.status = status;
     send("agent:status", { id: agent.id, status });
@@ -108,15 +128,30 @@ handle("agent:spawn", ({ worktreeId, command }) => {
 });
 
 handle("agent:kill", ({ id }) => {
-  processes.get(id)?.kill();
+  processes.get(id)?.kill("SIGTERM");
   processes.delete(id);
   const agent = agents.get(id);
   if (agent) agent.status = "stopped";
 });
 
-handle("agent:list", (_args) => Array.from(agents.values()));
+handle("agent:list", () => Array.from(agents.values()));
 
-app.whenReady().then(createWindow);
+handle("agent:input", ({ id, data }) => {
+  processes.get(id)?.write(data);
+});
+
+handle("agent:resize", ({ id, cols, rows }) => {
+  processes.get(id)?.resize(cols, rows);
+});
+
+app.whenReady().then(() => {
+  loadWorktreesFromGit();
+  createWindow();
+  globalShortcut.register("CommandOrControl+R", () => {
+    app.relaunch();
+    app.exit(0);
+  });
+});
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

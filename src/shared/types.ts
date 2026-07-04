@@ -1,4 +1,4 @@
-export type AgentStatus = "idle" | "running" | "stopped" | "error";
+export type AgentStatus = "running" | "stopped" | "error";
 
 export interface Worktree {
   id: string;
@@ -11,23 +11,24 @@ export interface Agent {
   worktreeId: string;
   command: string[];
   status: AgentStatus;
-  startedAt: number | null;
+  startedAt: number;
 }
 
 export interface LogLine {
   agentId: string;
-  stream: "stdout" | "stderr";
   data: string;
   timestamp: number;
 }
 
 export interface IpcInvoke {
-  "worktree:create": { args: { branch: string; path: string }; result: Worktree };
+  "worktree:create": { args: { branch: string }; result: Worktree };
   "worktree:list": { args: void; result: Worktree[] };
   "worktree:remove": { args: { id: string }; result: void };
   "agent:spawn": { args: { worktreeId: string; command: string[] }; result: Agent };
   "agent:kill": { args: { id: string }; result: void };
   "agent:list": { args: void; result: Agent[] };
+  "agent:input": { args: { id: string; data: string }; result: void };
+  "agent:resize": { args: { id: string; cols: number; rows: number }; result: void };
 }
 
 export interface IpcEvents {
