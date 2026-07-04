@@ -1,0 +1,11 @@
+appId: com.schema.app
+productName: Schema
+directories:
+  output: dist/packaged
+files:
+  - dist/main/**/*
+  - dist/renderer/**/*
+  - package.json
+mac:
+  category: public.app-category.developer-tools
+  target: dmg

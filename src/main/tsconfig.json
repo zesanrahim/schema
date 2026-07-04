@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "lib": ["esnext"],
+    "types": ["node"],
+    "rootDir": "..",
+    "outDir": "../../dist/main",
+    "verbatimModuleSyntax": false,
+    "esModuleInterop": true
+  },
+  "include": ["./**/*", "../preload/**/*", "../shared/**/*"]
+}

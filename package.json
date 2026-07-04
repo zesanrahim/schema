@@ -1,17 +1,35 @@
 {
   "name": "schema",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "version": "0.1.0",
+  "description": "Electron app for orchestrating multiple AI CLI agents across git worktrees",
+  "main": "dist/main/main/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "concurrently -k -n VITE,ELECTRON -c cyan,yellow \"bun run dev:renderer\" \"bun run dev:main\"",
+    "dev:renderer": "vite",
+    "dev:main": "tsc -p src/main/tsconfig.json --outDir dist/main && electron dist/main/main/index.js",
+    "build": "bun run build:renderer && bun run build:main",
+    "build:renderer": "vite build",
+    "build:main": "tsc -p src/main/tsconfig.json --outDir dist/main",
+    "pack": "bun run build && electron-builder",
+    "typecheck": "tsc -p src/main/tsconfig.json --noEmit && tsc -p src/renderer/tsconfig.json --noEmit"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "dependencies": {
+    "electron": "^36.3.1",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
   "devDependencies": {
-    "@types/node": "^26.1.0",
-    "typescript": "^6.0.3"
+    "@types/node": "^22.15.32",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.5.2",
+    "concurrently": "^9.1.2",
+    "electron-builder": "^26.0.12",
+    "playwright-core": "^1.61.1",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
   }
 }
