@@ -96,6 +96,12 @@ export function App() {
     setAgents((prev) => prev.map((a) => (a.id === id ? { ...a, status: "stopped" as const } : a)));
   }
 
+  async function commitAndPush(agentId: string) {
+    const prompt =
+      "Please run git add -A, then write a concise commit message based on the diff and commit, then push to origin. Do not ask for confirmation.";
+    await window.api.invoke("agent:input", { id: agentId, data: prompt + "\n" });
+  }
+
   const selectedWorktree = worktrees.find((w) => w.id === selectedWorktreeId) ?? null;
   const activeAgent = agents.find((a) => a.worktreeId === selectedWorktreeId && a.status === "running") ?? null;
   const agentLogs = activeAgent ? logs.filter((l) => l.agentId === activeAgent.id) : [];
@@ -311,18 +317,33 @@ export function App() {
               flexShrink: 0,
             }}>
               <span style={{ fontSize: 11, color: "var(--text-2)" }}>{selectedWorktree?.branch}</span>
-              <button
-                onClick={() => killAgent(activeAgent.id)}
-                style={{
-                  background: "none",
-                  border: "1px solid var(--border-2)",
-                  color: "var(--red)",
-                  padding: "3px 8px",
-                  fontSize: 11,
-                }}
-              >
-                ■ Kill
-              </button>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button
+                  onClick={() => commitAndPush(activeAgent.id)}
+                  style={{
+                    background: "none",
+                    border: "1px solid var(--border-2)",
+                    color: "var(--accent)",
+                    padding: "3px 8px",
+                    fontSize: 11,
+                  }}
+                  title="Ask agent to commit all changes and push"
+                >
+                  ↑ Commit & Push
+                </button>
+                <button
+                  onClick={() => killAgent(activeAgent.id)}
+                  style={{
+                    background: "none",
+                    border: "1px solid var(--border-2)",
+                    color: "var(--red)",
+                    padding: "3px 8px",
+                    fontSize: 11,
+                  }}
+                >
+                  ■ Kill
+                </button>
+              </div>
             </div>
             <Terminal agentId={activeAgent.id} logs={agentLogs} />
           </div>
