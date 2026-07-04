@@ -227,3 +227,74 @@ export function sendMessage(chatId: string, userText: string, worktreePath: stri
 export function killAllProcesses() {
   for (const [id] of processes) stopProcess(id);
 }
+
+let cachedCommands: Array<{ name: string; description: string }> | null = null;
+
+export function fetchSlashCommands(worktreePath: string): Promise<Array<{ name: string; description: string }>> {
+  if (cachedCommands) return Promise.resolve(cachedCommands);
+
+  return new Promise((resolve) => {
+    const shell = process.env.SHELL ?? "/bin/zsh";
+    const proc = spawn(shell, ["-lc", "claude --output-format stream-json --dangerously-skip-permissions"], {
+      cwd: worktreePath,
+      env: { ...process.env },
+    }) as ChildProcessWithoutNullStreams;
+
+    let buf = "";
+    let helpText = "";
+    let sent = false;
+
+    proc.stdout.on("data", (chunk: Buffer) => {
+      buf += chunk.toString();
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const event = JSON.parse(line) as Record<string, unknown>;
+          if (event.type === "system" && !sent) {
+            sent = true;
+            proc.stdin.write("/help\n");
+          }
+          if (event.type === "assistant") {
+            const content = (event.message as { content?: Array<Record<string, unknown>> }).content ?? [];
+            for (const block of content) {
+              if (block.type === "text") helpText += block.text as string;
+            }
+          }
+          if (event.type === "result") {
+            proc.kill();
+            const parsed = parseHelpOutput(helpText);
+            cachedCommands = parsed;
+            resolve(parsed);
+          }
+        } catch {}
+      }
+    });
+
+    const timeout = setTimeout(() => {
+      proc.kill();
+      resolve(parseHelpOutput(helpText));
+    }, 15000);
+
+    proc.on("close", () => {
+      clearTimeout(timeout);
+      const parsed = parseHelpOutput(helpText);
+      cachedCommands = parsed;
+      resolve(parsed);
+    });
+
+    proc.on("error", () => { clearTimeout(timeout); resolve([]); });
+  });
+}
+
+function parseHelpOutput(text: string): Array<{ name: string; description: string }> {
+  const commands: Array<{ name: string; description: string }> = [];
+  for (const line of text.split("\n")) {
+    const match = line.match(/^\s*\*?\*?`?(\/[a-z][a-z0-9_-]*)`?\*?\*?\s+[-–]?\s*(.*)/);
+    if (match && match[1] && match[2]) {
+      commands.push({ name: match[1].slice(1), description: match[2].trim() });
+    }
+  }
+  return commands;
+}

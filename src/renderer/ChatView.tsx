@@ -1,19 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import type { Chat, Message, ToolCall } from "../shared/types";
 
-const SLASH_COMMANDS = [
-  { name: "help",     description: "Show available commands and usage" },
-  { name: "clear",    description: "Clear the conversation history" },
-  { name: "compact",  description: "Compact conversation to save context" },
-  { name: "model",    description: "View or switch the current model" },
-  { name: "review",   description: "Review a GitHub PR" },
-  { name: "cost",     description: "Show token usage and cost for this session" },
-  { name: "doctor",   description: "Check Claude Code installation and config" },
-  { name: "status",   description: "Show account and auth status" },
-  { name: "memory",   description: "Manage Claude's memory files" },
-  { name: "config",   description: "View or edit configuration settings" },
-  { name: "init",     description: "Initialize a CLAUDE.md for this project" },
-];
 
 interface Props {
   chat: Chat;
@@ -117,11 +104,16 @@ export function ChatView({ chat, worktreeBranch, onNewChat, onDeleteChat, chatLi
   const [sending, setSending] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [slashIndex, setSlashIndex] = useState(0);
+  const [allCommands, setAllCommands] = useState<Array<{ name: string; description: string }>>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  useEffect(() => {
+    window.api.invoke("chat:slash-commands").then(setAllCommands);
+  }, []);
+
   const slashFilter = input.startsWith("/") && !input.includes(" ")
-    ? SLASH_COMMANDS.filter((c) => c.name.startsWith(input.slice(1)))
+    ? allCommands.filter((c) => c.name.startsWith(input.slice(1)))
     : [];
   const showSlash = slashFilter.length > 0;
 
@@ -174,7 +166,7 @@ export function ChatView({ chat, worktreeBranch, onNewChat, onDeleteChat, chatLi
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  function selectSlash(cmd: typeof SLASH_COMMANDS[number]) {
+  function selectSlash(cmd: { name: string; description: string }) {
     setInput("/" + cmd.name + " ");
     setSlashIndex(0);
     inputRef.current?.focus();

@@ -54,6 +54,7 @@ export interface IpcInvoke {
   "worktree:list": { args: void; result: Worktree[] };
   "worktree:remove": { args: { id: string }; result: void };
   "worktree:commit-push": { args: { id: string }; result: { commitMessage: string } };
+  "chat:slash-commands": { args: void; result: Array<{ name: string; description: string }> };
   "chat:create": { args: { worktreeId: string }; result: Chat };
   "chat:list": { args: { worktreeId: string }; result: Chat[] };
   "chat:delete": { args: { id: string }; result: void };

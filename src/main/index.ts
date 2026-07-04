@@ -5,7 +5,7 @@ import { execSync } from "child_process";
 import type { IpcInvoke, IpcEvents, Repo, Worktree } from "../shared/types";
 
 import { clearToken, startDeviceFlow, pollForToken, getAuthStatus } from "./github";
-import { chats as chatStore, loadChats, createChat, listChats, deleteChat, getMessages, sendMessage, setSender, killAllProcesses } from "./chat";
+import { chats as chatStore, loadChats, createChat, listChats, deleteChat, getMessages, sendMessage, setSender, killAllProcesses, fetchSlashCommands } from "./chat";
 
 const dev = process.env.NODE_ENV !== "production";
 
@@ -155,6 +155,10 @@ handle("worktree:commit-push", ({ id }) => {
   return { commitMessage };
 });
 
+handle("chat:slash-commands", () => {
+  const anyWorktree = Array.from(worktrees.values())[0];
+  return fetchSlashCommands(anyWorktree?.path ?? process.cwd());
+});
 handle("chat:create", ({ worktreeId }) => createChat(worktreeId));
 handle("chat:list", ({ worktreeId }) => listChats(worktreeId));
 handle("chat:delete", ({ id }) => deleteChat(id));
