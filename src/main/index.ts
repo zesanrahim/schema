@@ -1,13 +1,14 @@
-import { app, BrowserWindow, ipcMain, globalShortcut } from "electron";
+import { app, BrowserWindow, ipcMain, globalShortcut, dialog } from "electron";
 import path from "path";
+import fs from "fs";
 import { execSync } from "child_process";
 import * as pty from "node-pty";
-import type { IpcInvoke, IpcEvents, Worktree, Agent, AgentStatus } from "../shared/types";
+import type { IpcInvoke, IpcEvents, Repo, Worktree, Agent, AgentStatus } from "../shared/types";
 import { clearToken, startDeviceFlow, pollForToken, getAuthStatus } from "./github";
 
 const dev = process.env.NODE_ENV !== "production";
-const repoRoot = process.cwd();
 
+const repos = new Map<string, Repo>();
 const worktrees = new Map<string, Worktree>();
 const agents = new Map<string, Agent>();
 const processes = new Map<string, pty.IPty>();
@@ -25,9 +26,18 @@ function handle<K extends keyof IpcInvoke>(
   ipcMain.handle(channel as string, (_event, args: IpcInvoke[K]["args"]) => handler(args));
 }
 
-function loadWorktreesFromGit() {
-  const output = execSync("git worktree list --porcelain", { cwd: repoRoot }).toString();
+function reposStorePath() {
+  return path.join(app.getPath("userData"), "repos.json");
+}
+
+function saveRepos() {
+  fs.writeFileSync(reposStorePath(), JSON.stringify(Array.from(repos.values())));
+}
+
+function loadWorktreesForRepo(repo: Repo): Worktree[] {
+  const output = execSync("git worktree list --porcelain", { cwd: repo.path }).toString();
   const blocks = output.split("\n\n").filter(Boolean);
+  const result: Worktree[] = [];
   blocks.forEach((block, i) => {
     const lines = block.split("\n");
     const pathLine = lines.find((l) => l.startsWith("worktree "));
@@ -35,9 +45,27 @@ function loadWorktreesFromGit() {
     if (!pathLine) return;
     const worktreePath = pathLine.slice("worktree ".length);
     const branch = branchLine ? branchLine.slice("branch refs/heads/".length) : "detached";
-    const worktree: Worktree = { id: crypto.randomUUID(), branch, path: worktreePath, isMain: i === 0 };
-    worktrees.set(worktree.id, worktree);
+    const wt: Worktree = { id: crypto.randomUUID(), repoId: repo.id, branch, path: worktreePath, isMain: i === 0 };
+    worktrees.set(wt.id, wt);
+    result.push(wt);
   });
+  return result;
+}
+
+function initRepos() {
+  try {
+    const stored = JSON.parse(fs.readFileSync(reposStorePath(), "utf8")) as Repo[];
+    for (const repo of stored) {
+      repos.set(repo.id, repo);
+      try { loadWorktreesForRepo(repo); } catch {}
+    }
+  } catch {
+    const repoPath = process.cwd();
+    const repo: Repo = { id: crypto.randomUUID(), name: path.basename(repoPath), path: repoPath };
+    repos.set(repo.id, repo);
+    try { loadWorktreesForRepo(repo); } catch {}
+    saveRepos();
+  }
 }
 
 function createWindow() {
@@ -57,50 +85,72 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
 
-  mainWindow.on("closed", () => {
-    mainWindow = null;
-  });
+  mainWindow.on("closed", () => { mainWindow = null; });
 }
 
-handle("worktree:create", ({ branch }) => {
-  const repoName = path.basename(repoRoot);
+handle("repo:add", async () => {
+  const result = await dialog.showOpenDialog(mainWindow!, {
+    title: "Select Git Repository",
+    properties: ["openDirectory"],
+  });
+  if (result.canceled || !result.filePaths[0]) throw new Error("Canceled");
+  const repoPath = result.filePaths[0];
+
+  try {
+    execSync("git rev-parse --git-dir", { cwd: repoPath, stdio: "ignore" });
+  } catch {
+    throw new Error("Not a git repository");
+  }
+
+  const repo: Repo = { id: crypto.randomUUID(), name: path.basename(repoPath), path: repoPath };
+  repos.set(repo.id, repo);
+  saveRepos();
+  const repoWorktrees = loadWorktreesForRepo(repo);
+  return { repo, worktrees: repoWorktrees };
+});
+
+handle("repo:list", () => Array.from(repos.values()));
+
+handle("repo:remove", ({ id }) => {
+  const repoWorktrees = Array.from(worktrees.values()).filter((w) => w.repoId === id);
+  for (const wt of repoWorktrees) worktrees.delete(wt.id);
+  repos.delete(id);
+  saveRepos();
+});
+
+handle("worktree:create", ({ repoId, branch }) => {
+  const repo = repos.get(repoId);
+  if (!repo) throw new Error(`Repo ${repoId} not found`);
   const slug = branch.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase();
-  const worktreePath = path.join(path.dirname(repoRoot), `${repoName}-${slug}`);
-  const branchExists = execSync(`git branch --list "${branch}"`, { cwd: repoRoot }).toString().trim() !== "";
+  const worktreePath = path.join(path.dirname(repo.path), `${repo.name}-${slug}`);
+  const branchExists = execSync(`git branch --list "${branch}"`, { cwd: repo.path }).toString().trim() !== "";
   const cmd = branchExists
     ? `git worktree add "${worktreePath}" "${branch}"`
     : `git worktree add "${worktreePath}" -b "${branch}"`;
-  execSync(cmd, { cwd: repoRoot });
-  const worktree: Worktree = { id: crypto.randomUUID(), branch, path: worktreePath, isMain: false };
-  worktrees.set(worktree.id, worktree);
-  return worktree;
+  execSync(cmd, { cwd: repo.path });
+  const wt: Worktree = { id: crypto.randomUUID(), repoId, branch, path: worktreePath, isMain: false };
+  worktrees.set(wt.id, wt);
+  return wt;
 });
 
 handle("worktree:list", () => Array.from(worktrees.values()));
 
 handle("worktree:remove", ({ id }) => {
-  const worktree = worktrees.get(id);
-  if (worktree) {
-    execSync(`git worktree remove "${worktree.path}"`, { cwd: repoRoot });
-    worktrees.delete(id);
-  }
+  const wt = worktrees.get(id);
+  if (!wt) return;
+  const repo = repos.get(wt.repoId);
+  if (repo) execSync(`git worktree remove "${wt.path}"`, { cwd: repo.path });
+  worktrees.delete(id);
 });
 
 handle("agent:spawn", ({ worktreeId, command }) => {
-  const worktree = worktrees.get(worktreeId);
-  if (!worktree) throw new Error(`Worktree ${worktreeId} not found`);
+  const wt = worktrees.get(worktreeId);
+  if (!wt) throw new Error(`Worktree ${worktreeId} not found`);
 
-  const agent: Agent = {
-    id: crypto.randomUUID(),
-    worktreeId,
-    command,
-    status: "running",
-    startedAt: Date.now(),
-  };
-
+  const agent: Agent = { id: crypto.randomUUID(), worktreeId, command, status: "running", startedAt: Date.now() };
   const shell = process.env.SHELL ?? "/bin/zsh";
   const proc = pty.spawn(shell, ["-lc", command.join(" ")], {
-    cwd: worktree.path,
+    cwd: wt.path,
     env: { ...process.env },
     cols: 220,
     rows: 50,
@@ -109,13 +159,7 @@ handle("agent:spawn", ({ worktreeId, command }) => {
   processes.set(agent.id, proc);
   agents.set(agent.id, agent);
 
-  proc.onData((data) => {
-    send("log:line", {
-      agentId: agent.id,
-      data,
-      timestamp: Date.now(),
-    });
-  });
+  proc.onData((data) => send("log:line", { agentId: agent.id, data, timestamp: Date.now() }));
 
   proc.onExit(({ exitCode }) => {
     const status: AgentStatus = exitCode === 0 ? "stopped" : "error";
@@ -136,14 +180,8 @@ handle("agent:kill", ({ id }) => {
 });
 
 handle("agent:list", () => Array.from(agents.values()));
-
-handle("agent:input", ({ id, data }) => {
-  processes.get(id)?.write(data);
-});
-
-handle("agent:resize", ({ id, cols, rows }) => {
-  processes.get(id)?.resize(cols, rows);
-});
+handle("agent:input", ({ id, data }) => { processes.get(id)?.write(data); });
+handle("agent:resize", ({ id, cols, rows }) => { processes.get(id)?.resize(cols, rows); });
 
 handle("github:auth-start", () => startDeviceFlow());
 handle("github:auth-poll", () => pollForToken());
@@ -151,7 +189,7 @@ handle("github:auth-status", () => getAuthStatus());
 handle("github:auth-disconnect", () => { clearToken(); });
 
 app.whenReady().then(() => {
-  loadWorktreesFromGit();
+  initRepos();
   createWindow();
   globalShortcut.register("CommandOrControl+R", () => {
     app.relaunch();
@@ -159,10 +197,5 @@ app.whenReady().then(() => {
   });
 });
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
-});
-
-app.on("activate", () => {
-  if (mainWindow === null) createWindow();
-});
+app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
+app.on("activate", () => { if (mainWindow === null) createWindow(); });

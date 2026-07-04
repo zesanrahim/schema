@@ -1,20 +1,17 @@
-import { useState, useEffect, useRef } from "react";
-import path from "path-browserify";
-import type { Worktree, Agent, LogLine } from "../shared/types";
+import { useState, useEffect } from "react";
+import type { Repo, Worktree, Agent, LogLine } from "../shared/types";
 import { Terminal } from "./Terminal";
 import { Settings } from "./Settings";
 
 type View = "main" | "settings";
 
-const input: React.CSSProperties = {
-  background: "var(--surface-2)",
-  border: "1px solid var(--border)",
-  color: "var(--text)",
-  padding: "5px 8px",
-  fontSize: 12,
-  width: "100%",
-  outline: "none",
-};
+function generateBranch() {
+  const now = new Date();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  const rand = Math.random().toString(36).slice(2, 5);
+  return `wt-${mm}${dd}-${rand}`;
+}
 
 function IconSettings() {
   return (
@@ -25,24 +22,29 @@ function IconSettings() {
   );
 }
 
+function IconPlus() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+      <path d="M5.5 1v9M1 5.5h9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
 export function App() {
   const [view, setView] = useState<View>("main");
+  const [repos, setRepos] = useState<Repo[]>([]);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [selectedWorktreeId, setSelectedWorktreeId] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
-  const [newBranch, setNewBranch] = useState("");
   const [spawnCommand] = useState(() => localStorage.getItem("lastCommand") ?? "claude --dangerously-skip-permissions");
-  const addInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    window.api.invoke("repo:list").then(setRepos);
     window.api.invoke("worktree:list").then(setWorktrees);
     window.api.invoke("agent:list").then(setAgents);
 
-    const unsubLog = window.api.on("log:line", (line) => {
-      setLogs((prev) => [...prev, line]);
-    });
+    const unsubLog = window.api.on("log:line", (line) => setLogs((prev) => [...prev, line]));
     const unsubStatus = window.api.on("agent:status", ({ id, status }) => {
       setAgents((prev) => prev.map((a) => (a.id === id ? { ...a, status } : a)));
     });
@@ -50,19 +52,27 @@ export function App() {
     return () => { unsubLog(); unsubStatus(); };
   }, []);
 
-  useEffect(() => {
-    if (adding) addInputRef.current?.focus();
-  }, [adding]);
+  async function addRepo() {
+    try {
+      const { repo, worktrees: wts } = await window.api.invoke("repo:add");
+      setRepos((prev) => [...prev, repo]);
+      setWorktrees((prev) => [...prev, ...wts]);
+    } catch {}
+  }
 
-  const mainWorktree = worktrees.find((w) => w.isMain);
-  const repoName = mainWorktree ? path.basename(mainWorktree.path) : "repo";
+  async function removeRepo(id: string) {
+    await window.api.invoke("repo:remove", { id });
+    setRepos((prev) => prev.filter((r) => r.id !== id));
+    setWorktrees((prev) => prev.filter((w) => w.repoId !== id));
+    if (worktrees.find((w) => w.id === selectedWorktreeId)?.repoId === id) {
+      setSelectedWorktreeId(null);
+    }
+  }
 
-  async function createWorktree() {
-    if (!newBranch.trim()) return;
-    const wt = await window.api.invoke("worktree:create", { branch: newBranch.trim() });
+  async function createWorktree(repoId: string) {
+    const branch = generateBranch();
+    const wt = await window.api.invoke("worktree:create", { repoId, branch });
     setWorktrees((prev) => [...prev, wt]);
-    setNewBranch("");
-    setAdding(false);
     setSelectedWorktreeId(wt.id);
   }
 
@@ -129,104 +139,138 @@ export function App() {
           flexDirection: "column",
           overflowY: "auto",
         }}>
-          <div style={{ padding: "12px 14px 6px" }}>
-            <div style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              marginBottom: 4,
-            }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", letterSpacing: "0.02em" }}>
-                {repoName}
-              </span>
-              <button
-                onClick={() => setAdding(true)}
-                style={{
-                  background: "none",
-                  border: "1px solid var(--border-2)",
-                  color: "var(--text-2)",
-                  width: 20,
-                  height: 20,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: 14,
-                  lineHeight: 1,
-                  flexShrink: 0,
-                }}
-                title="New worktree"
-              >
-                +
-              </button>
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-              {worktrees.map((wt) => {
-                const agent = agents.find((a) => a.worktreeId === wt.id);
-                const isSelected = selectedWorktreeId === wt.id;
-                return (
-                  <div
-                    key={wt.id}
-                    onClick={() => setSelectedWorktreeId(isSelected ? null : wt.id)}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 7,
-                      padding: "5px 8px",
-                      background: isSelected ? "var(--accent-dim)" : "transparent",
-                      borderLeft: isSelected ? "2px solid var(--accent)" : "2px solid transparent",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <span className={`status-dot ${agent?.status ?? "idle"}`} />
+          <div style={{ flex: 1 }}>
+            {repos.map((repo) => {
+              const repoWorktrees = worktrees.filter((w) => w.repoId === repo.id);
+              return (
+                <div key={repo.id} style={{ padding: "10px 0 6px" }}>
+                  <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "0 12px 4px",
+                  }}>
                     <span style={{
-                      fontSize: 12,
-                      color: isSelected ? "var(--text)" : "var(--text-2)",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: "var(--text-2)",
+                      letterSpacing: "0.06em",
+                      textTransform: "uppercase",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
-                      flex: 1,
                     }}>
-                      {wt.isMain ? `${wt.branch} (main)` : wt.branch}
+                      {repo.name}
                     </span>
-                    {!wt.isMain && (
+                    <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
                       <button
-                        onClick={(e) => { e.stopPropagation(); removeWorktree(wt.id); }}
+                        onClick={() => createWorktree(repo.id)}
+                        style={{
+                          background: "none",
+                          border: "1px solid var(--border-2)",
+                          color: "var(--text-2)",
+                          width: 18,
+                          height: 18,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                        title="New worktree"
+                      >
+                        <IconPlus />
+                      </button>
+                      <button
+                        onClick={() => removeRepo(repo.id)}
                         style={{
                           background: "none",
                           border: "none",
                           color: "var(--text-3)",
-                          padding: "0 2px",
-                          fontSize: 13,
-                          lineHeight: 1,
-                          opacity: isSelected ? 1 : 0,
+                          width: 18,
+                          height: 18,
+                          fontSize: 14,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
                         }}
-                        title="Remove"
+                        title="Remove repo"
                       >
                         ×
                       </button>
-                    )}
+                    </div>
                   </div>
-                );
-              })}
 
-              {adding && (
-                <div style={{ padding: "4px 8px 4px 18px" }}>
-                  <input
-                    ref={addInputRef}
-                    style={input}
-                    placeholder="branch name"
-                    value={newBranch}
-                    onChange={(e) => setNewBranch(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") createWorktree();
-                      if (e.key === "Escape") { setAdding(false); setNewBranch(""); }
-                    }}
-                    onBlur={() => { if (!newBranch.trim()) { setAdding(false); } }}
-                  />
+                  {repoWorktrees.map((wt) => {
+                    const agent = agents.find((a) => a.worktreeId === wt.id);
+                    const isSelected = selectedWorktreeId === wt.id;
+                    return (
+                      <div
+                        key={wt.id}
+                        onClick={() => setSelectedWorktreeId(isSelected ? null : wt.id)}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 7,
+                          padding: "5px 12px 5px 20px",
+                          background: isSelected ? "var(--accent-dim)" : "transparent",
+                          borderLeft: isSelected ? "2px solid var(--accent)" : "2px solid transparent",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <span className={`status-dot ${agent?.status ?? "idle"}`} />
+                        <span style={{
+                          fontSize: 12,
+                          color: isSelected ? "var(--text)" : "var(--text-2)",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          flex: 1,
+                        }}>
+                          {wt.branch}
+                          {wt.isMain && <span style={{ color: "var(--text-3)", marginLeft: 4 }}>(main)</span>}
+                        </span>
+                        {!wt.isMain && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); removeWorktree(wt.id); }}
+                            style={{
+                              background: "none",
+                              border: "none",
+                              color: "var(--text-3)",
+                              padding: "0 2px",
+                              fontSize: 13,
+                              lineHeight: 1,
+                              opacity: isSelected ? 1 : 0,
+                            }}
+                            title="Remove worktree"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-              )}
-            </div>
+              );
+            })}
+          </div>
+
+          <div style={{ padding: "10px 12px", borderTop: "1px solid var(--border)" }}>
+            <button
+              onClick={addRepo}
+              style={{
+                background: "none",
+                border: "1px solid var(--border-2)",
+                color: "var(--text-2)",
+                padding: "6px 10px",
+                fontSize: 11,
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+              }}
+            >
+              <IconPlus /> Add repo
+            </button>
           </div>
         </div>
 
