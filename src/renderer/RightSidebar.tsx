@@ -177,10 +177,15 @@ export function RightSidebar({ worktree, repo, onUpdateRepo, onOpenDiff }: Props
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
               <StatusDot status={workspace.status} />
               <span style={{ fontSize: 11, color: "var(--text-3)", textTransform: "capitalize" }}>{workspace.status}</span>
+              {workspace.port && (
+                <span style={{ fontSize: 11, color: "var(--text-2)", fontFamily: "Menlo, Monaco, 'Courier New', monospace" }}>
+                  :{workspace.port}
+                </span>
+              )}
               {workspace.url && (
                 <a href="#" onClick={(e) => { e.preventDefault(); window.open(workspace.url!, "_blank"); }}
-                  style={{ marginLeft: "auto", fontSize: 11, color: "var(--accent)", textDecoration: "none", fontFamily: "Menlo, Monaco, 'Courier New', monospace" }}>
-                  :{workspace.port} ↗
+                  style={{ marginLeft: "auto", fontSize: 11, color: "var(--accent)", textDecoration: "none" }}>
+                  ↗
                 </a>
               )}
             </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import type { Repo, Worktree, Chat } from "../shared/types";
+import type { Repo, Worktree, Chat, Workspace } from "../shared/types";
 import { ChatView } from "./ChatView";
 import { DiffView } from "./DiffView";
 import { RightSidebar } from "./RightSidebar";
@@ -36,6 +36,13 @@ export function App() {
   const [chats, setChats] = useState<Chat[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [pushing, setPushing] = useState<string | null>(null);
+  const [workspaces, setWorkspaces] = useState<Map<string, Workspace>>(new Map());
+
+  useEffect(() => {
+    return window.api.on("workspace:update", ({ workspace }) => {
+      setWorkspaces((prev) => new Map(prev).set(workspace.worktreeId, workspace));
+    });
+  }, []);
 
   useEffect(() => {
     window.api.invoke("repo:list").then(setRepos);
@@ -254,6 +261,9 @@ export function App() {
 
                   {repoWorktrees.map((wt) => {
                     const isSelected = selectedWorktreeId === wt.id;
+                    const ws = workspaces.get(wt.id);
+                    const wsRunning = ws?.status === "running" || ws?.status === "starting";
+                    const dotColor = ws?.status === "running" ? "var(--green)" : ws?.status === "starting" ? "#d4a847" : ws?.status === "error" ? "var(--red)" : null;
                     return (
                       <div
                         key={wt.id}
@@ -268,6 +278,9 @@ export function App() {
                           cursor: "pointer",
                         }}
                       >
+                        {dotColor && (
+                          <span style={{ width: 6, height: 6, borderRadius: "50%", background: dotColor, flexShrink: 0 }} />
+                        )}
                         <span style={{
                           fontSize: 12,
                           color: isSelected ? "var(--text)" : "var(--text-2)",
@@ -279,6 +292,15 @@ export function App() {
                           {wt.branch}
                           {wt.isMain && <span style={{ color: "var(--text-3)", marginLeft: 4 }}>(main)</span>}
                         </span>
+                        {wsRunning && ws?.port && (
+                          <span
+                            onClick={(e) => { e.stopPropagation(); window.open(ws.url!, "_blank"); }}
+                            style={{ fontSize: 10, color: "var(--accent)", fontFamily: "Menlo, Monaco, 'Courier New', monospace", flexShrink: 0, cursor: "pointer" }}
+                            title={ws.url ?? undefined}
+                          >
+                            :{ws.port}
+                          </span>
+                        )}
                         {!wt.isMain && (
                           <button
                             onClick={(e) => { e.stopPropagation(); removeWorktree(wt.id); }}
