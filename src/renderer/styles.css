@@ -1,18 +1,18 @@
 :root {
-  --bg: #080808;
-  --surface: #111111;
-  --surface-2: #1a1a1a;
-  --surface-3: #222222;
-  --border: #252525;
-  --border-2: #333333;
-  --text: #e2e2e2;
-  --text-2: #888888;
-  --text-3: #3a3a3a;
-  --accent: #8b7cf8;
-  --accent-dim: rgba(139, 124, 248, 0.12);
-  --red: #e05252;
-  --red-dim: rgba(224, 82, 82, 0.1);
-  --green: #4ade80;
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f5f5f5;
+  --surface-3: #eeeeee;
+  --border: #d4d4d4;
+  --border-2: #b3b3b3;
+  --text: #2b2b2b;
+  --text-2: #6b6b6b;
+  --text-3: #b3b3b3;
+  --accent: #2b2b2b;
+  --accent-dim: rgba(43, 43, 43, 0.06);
+  --red: #c0392b;
+  --red-dim: rgba(192, 57, 43, 0.08);
+  --green: #2e7d52;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -28,11 +28,16 @@ body {
 }
 
 button { font-family: inherit; cursor: pointer; }
-input, select { font-family: inherit; }
+input, select {
+  font-family: inherit;
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--border);
+}
 
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.2; }
+  50% { opacity: 0.3; }
 }
 
 .status-dot {
@@ -45,6 +50,6 @@ input, select { font-family: inherit; }
   background: var(--green);
   animation: pulse-dot 2s ease-in-out infinite;
 }
-.status-dot.stopped { background: var(--text-3); }
+.status-dot.stopped { background: var(--border-2); }
 .status-dot.error { background: var(--red); }
-.status-dot.idle { background: var(--text-3); }
+.status-dot.idle { background: var(--border); }

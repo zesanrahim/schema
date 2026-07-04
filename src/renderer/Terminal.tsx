@@ -17,7 +17,16 @@ export function Terminal({ agentId, logs }: Props) {
 
   useEffect(() => {
     const term = new XTerm({
-      theme: { background: "#0d0d0d", foreground: "#e0e0e0", cursor: "#4ade80" },
+      theme: {
+        background: "#ffffff",
+        foreground: "#2b2b2b",
+        cursor: "#2b2b2b",
+        selectionBackground: "#d4d4d4",
+        black: "#2b2b2b",
+        brightBlack: "#6b6b6b",
+        white: "#f5f5f5",
+        brightWhite: "#ffffff",
+      },
       fontFamily: "monospace",
       fontSize: 13,
       cursorBlink: true,
