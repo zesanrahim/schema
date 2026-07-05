@@ -7,6 +7,8 @@ import type { IpcInvoke, IpcEvents, Repo, Worktree } from "../shared/types";
 
 import { clearToken, startDeviceFlow, pollForToken, getAuthStatus } from "./github";
 import { getAuthStatus as getAnthropicStatus, authLogout as anthropicLogout, getMaskedKey, setStoredKey, clearStoredKey } from "./anthropic";
+import type { AppSettings } from "../shared/types";
+import type { ProviderId } from "../shared/types.provider";
 import { chats as chatStore, loadChats, createChat, listChats, deleteChat, getMessages, sendMessage, setSender, killAllProcesses, fetchSlashCommands } from "./chat";
 import { createTerminal, writeTerminal, resizeTerminal, destroyTerminal, killAllTerminals, setTerminalSender } from "./terminal";
 import { getWorkspace, startWorkspace, stopWorkspace, killAllWorkspaces, setWorkspaceSender } from "./workspace";
@@ -15,6 +17,14 @@ const dev = process.env.NODE_ENV !== "production";
 
 const repos = new Map<string, Repo>();
 const worktrees = new Map<string, Worktree>();
+
+let appSettings: AppSettings = { defaultProviderId: "claude" };
+
+function settingsPath() { return path.join(app.getPath("userData"), "app-settings.json"); }
+function loadSettings() {
+  try { appSettings = { ...appSettings, ...JSON.parse(fs.readFileSync(settingsPath(), "utf8")) }; } catch {}
+}
+function saveSettings() { fs.writeFileSync(settingsPath(), JSON.stringify(appSettings)); }
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -164,7 +174,7 @@ handle("chat:slash-commands", () => {
   const anyWorktree = Array.from(worktrees.values())[0];
   return fetchSlashCommands(anyWorktree?.path ?? process.cwd());
 });
-handle("chat:create", ({ worktreeId }) => createChat(worktreeId));
+handle("chat:create", ({ worktreeId, providerId }) => createChat(worktreeId, (providerId as ProviderId | undefined) ?? appSettings.defaultProviderId));
 handle("chat:list", ({ worktreeId }) => listChats(worktreeId));
 handle("chat:delete", ({ id }) => deleteChat(id));
 handle("chat:messages", ({ chatId }) => getMessages(chatId));
@@ -247,6 +257,9 @@ handle("anthropic:auth-logout", () => { anthropicLogout(); });
 handle("anthropic:key-get", () => ({ masked: getMaskedKey() }));
 handle("anthropic:key-set", ({ key }) => { setStoredKey(key); });
 handle("anthropic:key-clear", () => { clearStoredKey(); });
+handle("settings:get", () => appSettings);
+handle("settings:set", (partial) => { appSettings = { ...appSettings, ...partial }; saveSettings(); });
+
 handle("anthropic:auth-login", () => {
   const terminalId = crypto.randomUUID();
   createTerminal(terminalId, process.cwd());
@@ -255,6 +268,7 @@ handle("anthropic:auth-login", () => {
 });
 
 app.whenReady().then(() => {
+  loadSettings();
   initRepos();
   loadChats();
   createWindow();

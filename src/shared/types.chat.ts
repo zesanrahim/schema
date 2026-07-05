@@ -18,13 +18,14 @@ export interface Chat {
   id: string;
   worktreeId: string;
   sessionId: string | null;
+  providerId: string;
   title: string;
   createdAt: number;
 }
 
 export interface ChatInvoke {
   "chat:slash-commands": { args: void; result: Array<{ name: string; description: string }> };
-  "chat:create": { args: { worktreeId: string }; result: Chat };
+  "chat:create": { args: { worktreeId: string; providerId?: string }; result: Chat };
   "chat:list": { args: { worktreeId: string }; result: Chat[] };
   "chat:delete": { args: { id: string }; result: void };
   "chat:messages": { args: { chatId: string }; result: Message[] };

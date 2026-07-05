@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import type { GitHubUser, AnthropicAuthStatus } from "../shared/types";
+import type { GitHubUser, AnthropicAuthStatus, ProviderId } from "../shared/types";
+import { PROVIDERS } from "../shared/types";
 import { TerminalView } from "./TerminalView";
 
 interface Props {
@@ -47,6 +48,7 @@ export function Settings({ onBack }: Props) {
   const [userCode, setUserCode] = useState<string | null>(null);
   const [ghError, setGhError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [defaultProvider, setDefaultProvider] = useState<ProviderId>("claude");
 
   const [anthropicStatus, setAnthropicStatus] = useState<AnthropicAuthStatus | null>(null);
   const [maskedKey, setMaskedKey] = useState<string | null>(null);
@@ -57,9 +59,15 @@ export function Settings({ onBack }: Props) {
 
   useEffect(() => {
     window.api.invoke("github:auth-status").then(setUser);
+    window.api.invoke("settings:get").then((s) => setDefaultProvider(s.defaultProviderId));
     refreshAnthropicStatus();
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
+
+  async function setProvider(id: ProviderId) {
+    setDefaultProvider(id);
+    await window.api.invoke("settings:set", { defaultProviderId: id });
+  }
 
   async function refreshAnthropicStatus() {
     const [status, { masked }] = await Promise.all([
@@ -163,6 +171,39 @@ export function Settings({ onBack }: Props) {
 
       <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>
         <div style={{ maxWidth: 480, display: "flex", flexDirection: "column", gap: 40 }}>
+
+          <div>
+            <div style={sectionLabel}>Provider</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {PROVIDERS.map((p) => (
+                <div
+                  key={p.id}
+                  onClick={() => setProvider(p.id)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: "10px 14px",
+                    background: defaultProvider === p.id ? "var(--accent-dim)" : "var(--surface)",
+                    border: `1px solid ${defaultProvider === p.id ? "var(--accent)" : "var(--border)"}`,
+                    cursor: "pointer",
+                  }}
+                >
+                  <span style={{
+                    width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+                    background: defaultProvider === p.id ? "var(--accent)" : "var(--text-3)",
+                  }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 12, color: defaultProvider === p.id ? "var(--accent)" : "var(--text)" }}>{p.name}</div>
+                    <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2 }}>{p.description}</div>
+                  </div>
+                  {defaultProvider === p.id && (
+                    <span style={{ fontSize: 10, color: "var(--accent)", letterSpacing: "0.05em", textTransform: "uppercase" }}>default</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
 
           <div>
             <div style={sectionLabel}>Anthropic</div>
@@ -275,6 +316,43 @@ export function Settings({ onBack }: Props) {
                 </div>
               </>
             )}
+          </div>
+
+          <div>
+            <div style={sectionLabel}>Default Provider</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {PROVIDERS.map((p) => {
+                const active = defaultProvider === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    onClick={async () => {
+                      setDefaultProvider(p.id);
+                      await window.api.invoke("settings:set", { defaultProviderId: p.id });
+                    }}
+                    style={{
+                      background: active ? "var(--accent-dim)" : "var(--surface)",
+                      border: `1px solid ${active ? "var(--accent)" : "var(--border-2)"}`,
+                      color: active ? "var(--accent)" : "var(--text-2)",
+                      padding: "8px 16px",
+                      fontSize: 12,
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "flex-start",
+                      gap: 3,
+                      cursor: "pointer",
+                      flex: 1,
+                    }}
+                  >
+                    <span style={{ fontWeight: 600 }}>{p.name}</span>
+                    <span style={{ fontSize: 10, color: active ? "var(--accent)" : "var(--text-3)" }}>{p.description}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 8 }}>
+              New chats will use this provider by default.
+            </div>
           </div>
 
           <div>

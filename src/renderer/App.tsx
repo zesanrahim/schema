@@ -62,7 +62,8 @@ export function App() {
   }, [selectedWorktreeId]);
 
   async function createChat(worktreeId: string) {
-    const chat = await window.api.invoke("chat:create", { worktreeId });
+    const settings = await window.api.invoke("settings:get");
+    const chat = await window.api.invoke("chat:create", { worktreeId, providerId: settings.defaultProviderId });
     setChats((prev) => [chat, ...prev]);
     setActiveChatId(chat.id);
   }

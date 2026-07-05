@@ -7,6 +7,9 @@ export type { GitHubUser, GithubInvoke } from "./types.github";
 export type { Workspace, WorkspaceInvoke, WorkspaceEvents } from "./types.workspace";
 export type { DiffFile, DiffResult, DiffInvoke } from "./types.diff";
 export type { AnthropicAuthStatus, AnthropicInvoke } from "./types.anthropic";
+export type { AppSettings, SettingsInvoke } from "./types.settings";
+export type { ProviderId, ProviderInfo, NormalizedEvent } from "./types.provider";
+export { PROVIDERS } from "./types.provider";
 
 import type { RepoInvoke } from "./types.repo";
 import type { WorktreeInvoke } from "./types.worktree";
@@ -16,6 +19,7 @@ import type { GithubInvoke } from "./types.github";
 import type { WorkspaceInvoke, WorkspaceEvents } from "./types.workspace";
 import type { DiffInvoke } from "./types.diff";
 import type { AnthropicInvoke } from "./types.anthropic";
+import type { SettingsInvoke } from "./types.settings";
 
-export type IpcInvoke = RepoInvoke & WorktreeInvoke & ChatInvoke & TerminalInvoke & GithubInvoke & WorkspaceInvoke & DiffInvoke & AnthropicInvoke;
+export type IpcInvoke = RepoInvoke & WorktreeInvoke & ChatInvoke & TerminalInvoke & GithubInvoke & WorkspaceInvoke & DiffInvoke & AnthropicInvoke & SettingsInvoke;
 export type IpcEvents = ChatEvents & TerminalEvents & WorkspaceEvents;

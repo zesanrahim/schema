@@ -3,7 +3,9 @@ import fs from "fs";
 import path from "path";
 import { app } from "electron";
 import type { Chat, Message, ToolCall, Sender } from "../shared/types";
+import type { ProviderId } from "../shared/types.provider";
 import { getAnthropicEnv } from "./anthropic";
+import { getProvider } from "./providers";
 
 export const chats = new Map<string, Chat>();
 export const chatMessages = new Map<string, Message[]>();
@@ -48,11 +50,12 @@ export function persistChats() {
   );
 }
 
-export function createChat(worktreeId: string): Chat {
+export function createChat(worktreeId: string, providerId: ProviderId = "claude"): Chat {
   const chat: Chat = {
     id: crypto.randomUUID(),
     worktreeId,
     sessionId: null,
+    providerId,
     title: "New chat",
     createdAt: Date.now(),
   };
@@ -97,65 +100,46 @@ function spawnShell(script: string, cwd: string): ChildProcessWithoutNullStreams
   }) as ChildProcessWithoutNullStreams;
 }
 
-function contentBlocks(event: Record<string, unknown>): Array<Record<string, unknown>> {
-  return (event.message as { content?: Array<Record<string, unknown>> })?.content ?? [];
-}
-
 function inputPreview(input: Record<string, unknown>): string {
   const val = input.file_path ?? input.command ?? input.pattern ?? Object.values(input)[0];
   if (typeof val !== "string") return "";
   return val.length > 60 ? val.slice(0, 60) + "…" : val;
 }
 
-function processEvent(chatId: string, event: Record<string, unknown>) {
+function dispatchEvents(chatId: string, rawEvent: Record<string, unknown>) {
+  const chat = chats.get(chatId);
+  const provider = getProvider((chat?.providerId ?? "claude") as ProviderId);
+  const normalized = provider.parseEvent(rawEvent);
   const msg = activeMessages.get(chatId);
 
-  if (event.type === "assistant" && msg) {
-    for (const block of contentBlocks(event)) {
-      if (block.type === "text") {
-        const text = block.text as string;
-        msg.content += text;
-        globalSend("chat:delta", { chatId, messageId: msg.id, text });
-      } else if (block.type === "tool_use") {
-        const tool: ToolCall = {
-          id: block.id as string,
-          name: block.name as string,
-          input: block.input as Record<string, unknown>,
-        };
-        msg.toolCalls.push(tool);
-        globalSend("chat:tool-start", { chatId, messageId: msg.id, tool: { ...tool, preview: inputPreview(tool.input) } });
+  for (const ev of normalized) {
+    if (ev.type === "text" && msg) {
+      msg.content += ev.text;
+      globalSend("chat:delta", { chatId, messageId: msg.id, text: ev.text });
+    } else if (ev.type === "tool_start" && msg) {
+      const tool: ToolCall = { id: ev.toolId, name: ev.toolName, input: ev.input };
+      msg.toolCalls.push(tool);
+      globalSend("chat:tool-start", { chatId, messageId: msg.id, tool: { ...tool, preview: inputPreview(tool.input) } });
+    } else if (ev.type === "tool_done" && msg) {
+      const tool = msg.toolCalls.find((t) => t.id === ev.toolId);
+      if (tool) {
+        tool.output = ev.output;
+        globalSend("chat:tool-done", { chatId, messageId: msg.id, toolId: ev.toolId, output: ev.output });
       }
-    }
-  } else if (event.type === "user" && msg) {
-    for (const block of contentBlocks(event)) {
-      if (block.type === "tool_result") {
-        const toolId = block.tool_use_id as string;
-        const raw = block.content;
-        const output = typeof raw === "string" ? raw : JSON.stringify(raw);
-        const tool = msg.toolCalls.find((t) => t.id === toolId);
-        if (tool) {
-          tool.output = output.slice(0, 2000);
-          globalSend("chat:tool-done", { chatId, messageId: msg.id, toolId, output: tool.output });
-        }
+    } else if (ev.type === "done") {
+      dbg(chatId, `done — disarming timeout, sessionId=${ev.sessionId.slice(0, 12)}`);
+      disarmers.get(chatId)?.();
+      if (ev.sessionId && chat) chat.sessionId = ev.sessionId;
+      if (msg) {
+        msg.done = true;
+        activeMessages.delete(chatId);
+        persistChats();
+        globalSend("chat:done", { chatId, messageId: msg.id });
       }
+    } else if (ev.type === "error") {
+      globalSend("chat:error", { chatId, error: ev.error });
+      if (msg) { msg.done = true; activeMessages.delete(chatId); }
     }
-  } else if (event.type === "result") {
-    dbg(chatId, `result received — disarming timeout`);
-    disarmers.get(chatId)?.();
-    const sessionId = event.session_id as string | undefined;
-    if (sessionId) {
-      const chat = chats.get(chatId);
-      if (chat) { chat.sessionId = sessionId; }
-    }
-    if (msg) {
-      msg.done = true;
-      activeMessages.delete(chatId);
-      persistChats();
-      globalSend("chat:done", { chatId, messageId: msg.id });
-    }
-  } else if (event.type === "system" && (event.subtype === "error" || event.subtype === "error_during_tool")) {
-    globalSend("chat:error", { chatId, error: String(event.error ?? "Unknown error") });
-    if (msg) { msg.done = true; activeMessages.delete(chatId); }
   }
 }
 
@@ -164,8 +148,8 @@ function ensureProcess(chatId: string, worktreePath: string): ChildProcessWithou
   if (existing) { dbg(chatId, "reusing existing process"); return existing; }
 
   const chat = chats.get(chatId);
-  const resumeFlag = chat?.sessionId ? `--resume "${chat.sessionId}"` : "";
-  const script = `claude --output-format stream-json --verbose --dangerously-skip-permissions ${resumeFlag}`;
+  const provider = getProvider((chat?.providerId ?? "claude") as ProviderId);
+  const script = provider.spawnScript(chat?.sessionId ?? null);
   const cwdExists = fs.existsSync(worktreePath);
   dbg(chatId, `cwd exists=${cwdExists} path=${worktreePath}`);
   if (!cwdExists) {
@@ -210,7 +194,7 @@ function ensureProcess(chatId: string, worktreePath: string): ChildProcessWithou
       try {
         const event = JSON.parse(line) as Record<string, unknown>;
         dbg(chatId, `event type=${event.type} subtype=${event.subtype ?? "-"}`);
-        processEvent(chatId, event);
+        dispatchEvents(chatId, event);
       } catch {
         const text = line.trim();
         dbg(chatId, `non-JSON stdout: ${text.slice(0, 100)}`);
