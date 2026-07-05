@@ -5,9 +5,10 @@ import "@xterm/xterm/css/xterm.css";
 
 interface Props {
   worktreeId: string;
+  terminalId?: string;
 }
 
-export function TerminalView({ worktreeId }: Props) {
+export function TerminalView({ worktreeId, terminalId: presetId }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalIdRef = useRef<string | null>(null);
 
@@ -38,7 +39,7 @@ export function TerminalView({ worktreeId }: Props) {
 
     let unsub: (() => void) | null = null;
 
-    window.api.invoke("terminal:create", { worktreeId }).then(({ terminalId }) => {
+    const setup = (terminalId: string) => {
       terminalIdRef.current = terminalId;
 
       term.onData((data) => {
@@ -55,7 +56,13 @@ export function TerminalView({ worktreeId }: Props) {
 
       fit.fit();
       window.api.invoke("terminal:resize", { terminalId, cols: term.cols, rows: term.rows });
-    });
+    };
+
+    if (presetId) {
+      setup(presetId);
+    } else {
+      window.api.invoke("terminal:create", { worktreeId }).then(({ terminalId }) => setup(terminalId));
+    }
 
     const observer = new ResizeObserver(() => {
       fit.fit();
@@ -73,11 +80,11 @@ export function TerminalView({ worktreeId }: Props) {
       observer.disconnect();
       unsub?.();
       term.dispose();
-      if (terminalIdRef.current) {
+      if (terminalIdRef.current && !presetId) {
         window.api.invoke("terminal:destroy", { terminalId: terminalIdRef.current });
       }
     };
-  }, [worktreeId]);
+  }, [worktreeId, presetId]);
 
   return (
     <div

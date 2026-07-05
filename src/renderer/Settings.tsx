@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
-import type { GitHubUser } from "../shared/types";
+import { useState, useEffect, useRef } from "react";
+import type { GitHubUser, AnthropicAuthStatus } from "../shared/types";
+import { TerminalView } from "./TerminalView";
 
 interface Props {
   onBack: () => void;
@@ -30,14 +31,44 @@ const btnGhost: React.CSSProperties = {
   fontSize: 12,
 };
 
-type AuthState = "idle" | "waiting" | "polling" | "done" | "error";
+const btnDanger: React.CSSProperties = {
+  background: "none",
+  border: "1px solid var(--border-2)",
+  color: "var(--red)",
+  padding: "7px 14px",
+  fontSize: 12,
+};
+
+type GhAuthState = "idle" | "waiting" | "polling" | "done" | "error";
 
 export function Settings({ onBack }: Props) {
   const [user, setUser] = useState<GitHubUser | null>(null);
-  const [authState, setAuthState] = useState<AuthState>("idle");
+  const [ghAuthState, setGhAuthState] = useState<GhAuthState>("idle");
   const [userCode, setUserCode] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [ghError, setGhError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+
+  const [anthropicStatus, setAnthropicStatus] = useState<AnthropicAuthStatus | null>(null);
+  const [maskedKey, setMaskedKey] = useState<string | null>(null);
+  const [keyInput, setKeyInput] = useState("");
+  const [showKeyInput, setShowKeyInput] = useState(false);
+  const [loginTerminalId, setLoginTerminalId] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    window.api.invoke("github:auth-status").then(setUser);
+    refreshAnthropicStatus();
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, []);
+
+  async function refreshAnthropicStatus() {
+    const [status, { masked }] = await Promise.all([
+      window.api.invoke("anthropic:auth-status"),
+      window.api.invoke("anthropic:key-get"),
+    ]);
+    setAnthropicStatus(status);
+    setMaskedKey(masked);
+  }
 
   function copyCode(code: string) {
     navigator.clipboard.writeText(code);
@@ -45,32 +76,65 @@ export function Settings({ onBack }: Props) {
     setTimeout(() => setCopied(false), 2000);
   }
 
-  useEffect(() => {
-    window.api.invoke("github:auth-status").then(setUser);
-  }, []);
-
-  async function connect() {
-    setAuthState("waiting");
-    setError(null);
+  async function ghConnect() {
+    setGhAuthState("waiting");
+    setGhError(null);
     try {
       const { userCode: code } = await window.api.invoke("github:auth-start");
       setUserCode(code);
-      setAuthState("polling");
+      setGhAuthState("polling");
       const u = await window.api.invoke("github:auth-poll");
       setUser(u);
-      setAuthState("done");
+      setGhAuthState("done");
       setUserCode(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Authorization failed");
-      setAuthState("error");
+      setGhError(e instanceof Error ? e.message : "Authorization failed");
+      setGhAuthState("error");
       setUserCode(null);
     }
   }
 
-  async function disconnect() {
+  async function ghDisconnect() {
     await window.api.invoke("github:auth-disconnect");
     setUser(null);
-    setAuthState("idle");
+    setGhAuthState("idle");
+  }
+
+  async function anthropicLogin() {
+    const { terminalId } = await window.api.invoke("anthropic:auth-login");
+    setLoginTerminalId(terminalId);
+    pollRef.current = setInterval(async () => {
+      const status = await window.api.invoke("anthropic:auth-status");
+      if (status.loggedIn) {
+        setAnthropicStatus(status);
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      }
+    }, 2000);
+  }
+
+  function closLoginTerminal() {
+    setLoginTerminalId(null);
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    refreshAnthropicStatus();
+  }
+
+  async function anthropicLogout() {
+    await window.api.invoke("anthropic:auth-logout");
+    await refreshAnthropicStatus();
+  }
+
+  async function saveKey() {
+    const trimmed = keyInput.trim();
+    if (!trimmed) return;
+    await window.api.invoke("anthropic:key-set", { key: trimmed });
+    setKeyInput("");
+    setShowKeyInput(false);
+    await refreshAnthropicStatus();
+  }
+
+  async function clearKey() {
+    await window.api.invoke("anthropic:key-clear");
+    await refreshAnthropicStatus();
   }
 
   return (
@@ -101,6 +165,119 @@ export function Settings({ onBack }: Props) {
         <div style={{ maxWidth: 480, display: "flex", flexDirection: "column", gap: 40 }}>
 
           <div>
+            <div style={sectionLabel}>Anthropic</div>
+
+            {loginTerminalId ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ fontSize: 12, color: "var(--text-2)" }}>
+                  Complete sign-in in the terminal below, then close it when done.
+                </div>
+                <div style={{ height: 220, border: "1px solid var(--border)", overflow: "hidden" }}>
+                  <TerminalView worktreeId={loginTerminalId} terminalId={loginTerminalId} />
+                </div>
+                <button
+                  style={{ ...btnGhost, width: "fit-content" }}
+                  onClick={closLoginTerminal}
+                >
+                  Done
+                </button>
+              </div>
+            ) : (
+              <>
+                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                  <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "10px 14px",
+                    background: "var(--surface)",
+                    border: "1px solid var(--border)",
+                  }}>
+                    <span style={{
+                      display: "inline-block",
+                      width: 8,
+                      height: 8,
+                      borderRadius: "50%",
+                      background: anthropicStatus?.loggedIn ? "var(--green)" : "var(--text-3)",
+                      flexShrink: 0,
+                    }} />
+                    <div style={{ flex: 1 }}>
+                      {anthropicStatus?.loggedIn ? (
+                        <>
+                          <div style={{ fontSize: 12, color: "var(--text)" }}>
+                            Signed in via {anthropicStatus.authMethod ?? "claude.ai"}
+                          </div>
+                          {anthropicStatus.email && (
+                            <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2 }}>
+                              {anthropicStatus.email}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div style={{ fontSize: 12, color: "var(--text-3)" }}>Not signed in</div>
+                      )}
+                    </div>
+                    {anthropicStatus?.loggedIn ? (
+                      <button style={btnDanger} onClick={anthropicLogout}>Sign out</button>
+                    ) : (
+                      <button style={btn} onClick={anthropicLogin}>Sign in</button>
+                    )}
+                  </div>
+
+                  <div style={{ borderTop: "1px solid var(--border)", paddingTop: 16 }}>
+                    <div style={{ ...sectionLabel, marginBottom: 8 }}>API Key override</div>
+                    <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 10, lineHeight: 1.6 }}>
+                      Set a key to pass <code style={{ fontFamily: "Menlo, Monaco, monospace", color: "var(--text-2)" }}>ANTHROPIC_API_KEY</code> to all Claude processes, overriding the signed-in account.
+                    </div>
+
+                    {maskedKey ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{
+                          fontFamily: "Menlo, Monaco, 'Courier New', monospace",
+                          fontSize: 12,
+                          color: "var(--text-2)",
+                          flex: 1,
+                        }}>
+                          {maskedKey}
+                        </span>
+                        <button style={btnGhost} onClick={() => setShowKeyInput(true)}>Replace</button>
+                        <button style={btnDanger} onClick={clearKey}>Clear</button>
+                      </div>
+                    ) : showKeyInput ? (
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <input
+                          autoFocus
+                          type="password"
+                          value={keyInput}
+                          onChange={(e) => setKeyInput(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") saveKey(); if (e.key === "Escape") setShowKeyInput(false); }}
+                          placeholder="sk-ant-…"
+                          style={{
+                            flex: 1,
+                            background: "var(--surface-2)",
+                            border: "1px solid var(--border-2)",
+                            color: "var(--text)",
+                            padding: "7px 10px",
+                            fontSize: 12,
+                            fontFamily: "Menlo, Monaco, 'Courier New', monospace",
+                            outline: "none",
+                          }}
+                        />
+                        <button style={btn} onClick={saveKey}>Save</button>
+                        <button style={btnGhost} onClick={() => setShowKeyInput(false)}>Cancel</button>
+                      </div>
+                    ) : (
+                      <button style={btnGhost} onClick={() => setShowKeyInput(true)}>
+                        + Add API key
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div>
             <div style={sectionLabel}>GitHub</div>
 
             {user ? (
@@ -114,9 +291,9 @@ export function Settings({ onBack }: Props) {
                   <div style={{ fontSize: 13, color: "var(--text)" }}>{user.name ?? user.login}</div>
                   <div style={{ fontSize: 11, color: "var(--text-2)", marginTop: 2 }}>@{user.login}</div>
                 </div>
-                <button style={btnGhost} onClick={disconnect}>Disconnect</button>
+                <button style={btnGhost} onClick={ghDisconnect}>Disconnect</button>
               </div>
-            ) : authState === "polling" && userCode ? (
+            ) : ghAuthState === "polling" && userCode ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                 <div style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.6 }}>
                   Enter this code at github.com/login/device
@@ -154,14 +331,14 @@ export function Settings({ onBack }: Props) {
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <button
-                  style={{ ...btn, width: "fit-content", opacity: authState === "waiting" ? 0.5 : 1 }}
-                  onClick={connect}
-                  disabled={authState === "waiting"}
+                  style={{ ...btn, width: "fit-content", opacity: ghAuthState === "waiting" ? 0.5 : 1 }}
+                  onClick={ghConnect}
+                  disabled={ghAuthState === "waiting"}
                 >
-                  {authState === "waiting" ? "Opening GitHub…" : "Connect with GitHub"}
+                  {ghAuthState === "waiting" ? "Opening GitHub…" : "Connect with GitHub"}
                 </button>
-                {error && (
-                  <span style={{ fontSize: 12, color: "var(--red)" }}>{error}</span>
+                {ghError && (
+                  <span style={{ fontSize: 12, color: "var(--red)" }}>{ghError}</span>
                 )}
               </div>
             )}

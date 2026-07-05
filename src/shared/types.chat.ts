@@ -37,4 +37,5 @@ export interface ChatEvents {
   "chat:tool-done": { chatId: string; messageId: string; toolId: string; output: string };
   "chat:done": { chatId: string; messageId: string };
   "chat:error": { chatId: string; error: string };
+  "chat:debug": { chatId: string; message: string };
 }

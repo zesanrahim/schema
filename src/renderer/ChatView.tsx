@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import type { Chat, Message, ToolCall } from "../shared/types";
+import { DebugPanel } from "./DebugPanel";
 
 interface Props {
   chat: Chat;
@@ -217,10 +218,17 @@ export function ChatView({ chat, onNewChat, onDeleteChat, chatList, onSelectChat
 
     const unsubError = window.api.on("chat:error", ({ chatId, error }) => {
       if (chatId !== chat.id) return;
-      setMessages((prev) => [
-        ...prev,
-        { id: crypto.randomUUID(), role: "assistant", content: `Error: ${error}`, toolCalls: [], timestamp: Date.now(), done: true },
-      ]);
+      setMessages((prev) => {
+        const hasThinking = prev.some((m) => m.role === "assistant" && !m.done);
+        if (hasThinking) {
+          return prev.map((m) =>
+            m.role === "assistant" && !m.done
+              ? { ...m, content: `Error: ${error}`, done: true }
+              : m
+          );
+        }
+        return [...prev, { id: crypto.randomUUID(), role: "assistant", content: `Error: ${error}`, toolCalls: [], timestamp: Date.now(), done: true }];
+      });
       setSending(false);
     });
 
@@ -231,7 +239,7 @@ export function ChatView({ chat, onNewChat, onDeleteChat, chatList, onSelectChat
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  function selectSlash(cmd: { name: string; description: string }) {
+function selectSlash(cmd: { name: string; description: string }) {
     setInput("/" + cmd.name + " ");
     setSlashIndex(0);
     inputRef.current?.focus();
@@ -393,6 +401,8 @@ export function ChatView({ chat, onNewChat, onDeleteChat, chatList, onSelectChat
         {messages.map((msg) => <MessageBubble key={msg.id} msg={msg} />)}
         <div ref={bottomRef} />
       </div>
+
+      {import.meta.env.DEV && <DebugPanel chatId={chat.id} />}
 
       <div style={{
         padding: "12px 16px",

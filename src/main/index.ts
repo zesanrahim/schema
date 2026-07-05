@@ -6,6 +6,7 @@ import { execSync } from "child_process";
 import type { IpcInvoke, IpcEvents, Repo, Worktree } from "../shared/types";
 
 import { clearToken, startDeviceFlow, pollForToken, getAuthStatus } from "./github";
+import { getAuthStatus as getAnthropicStatus, authLogout as anthropicLogout, getMaskedKey, setStoredKey, clearStoredKey } from "./anthropic";
 import { chats as chatStore, loadChats, createChat, listChats, deleteChat, getMessages, sendMessage, setSender, killAllProcesses, fetchSlashCommands } from "./chat";
 import { createTerminal, writeTerminal, resizeTerminal, destroyTerminal, killAllTerminals, setTerminalSender } from "./terminal";
 import { getWorkspace, startWorkspace, stopWorkspace, killAllWorkspaces, setWorkspaceSender } from "./workspace";
@@ -240,6 +241,18 @@ handle("github:auth-start", () => startDeviceFlow());
 handle("github:auth-poll", () => pollForToken());
 handle("github:auth-status", () => getAuthStatus());
 handle("github:auth-disconnect", () => { clearToken(); });
+
+handle("anthropic:auth-status", () => getAnthropicStatus());
+handle("anthropic:auth-logout", () => { anthropicLogout(); });
+handle("anthropic:key-get", () => ({ masked: getMaskedKey() }));
+handle("anthropic:key-set", ({ key }) => { setStoredKey(key); });
+handle("anthropic:key-clear", () => { clearStoredKey(); });
+handle("anthropic:auth-login", () => {
+  const terminalId = crypto.randomUUID();
+  createTerminal(terminalId, process.cwd());
+  setTimeout(() => writeTerminal(terminalId, "claude auth login\r"), 500);
+  return { terminalId };
+});
 
 app.whenReady().then(() => {
   initRepos();

@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { app } from "electron";
 import type { Chat, Message, ToolCall, Sender } from "../shared/types";
+import { getAnthropicEnv } from "./anthropic";
 
 export const chats = new Map<string, Chat>();
 export const chatMessages = new Map<string, Message[]>();
@@ -10,11 +11,19 @@ export const chatMessages = new Map<string, Message[]>();
 const processes = new Map<string, ChildProcessWithoutNullStreams>();
 const buffers = new Map<string, string>();
 const activeMessages = new Map<string, Message>();
+const armers = new Map<string, () => void>();
+const disarmers = new Map<string, () => void>();
 
 let globalSend: Sender = () => {};
 
 export function setSender(send: Sender) {
   globalSend = send;
+}
+
+function dbg(chatId: string, msg: string) {
+  const ts = new Date().toISOString().slice(11, 23);
+  console.log(`[chat:${chatId.slice(0, 6)}] ${ts} ${msg}`);
+  globalSend("chat:debug", { chatId, message: `${ts} ${msg}` });
 }
 
 function storagePath() {
@@ -73,6 +82,8 @@ export function getMessages(chatId: string): Message[] {
 function stopProcess(chatId: string) {
   processes.get(chatId)?.kill("SIGTERM");
   processes.delete(chatId);
+  armers.delete(chatId);
+  disarmers.delete(chatId);
   buffers.delete(chatId);
   activeMessages.delete(chatId);
 }
@@ -81,7 +92,8 @@ function spawnShell(script: string, cwd: string): ChildProcessWithoutNullStreams
   const shell = process.env.SHELL ?? "/bin/zsh";
   return spawn(shell, ["-lc", script], {
     cwd,
-    env: { ...process.env },
+    env: { ...process.env, ...getAnthropicEnv() },
+    stdio: ["pipe", "pipe", "pipe"],
   }) as ChildProcessWithoutNullStreams;
 }
 
@@ -128,6 +140,8 @@ function processEvent(chatId: string, event: Record<string, unknown>) {
       }
     }
   } else if (event.type === "result") {
+    dbg(chatId, `result received — disarming timeout`);
+    disarmers.get(chatId)?.();
     const sessionId = event.session_id as string | undefined;
     if (sessionId) {
       const chat = chats.get(chatId);
@@ -147,41 +161,122 @@ function processEvent(chatId: string, event: Record<string, unknown>) {
 
 function ensureProcess(chatId: string, worktreePath: string): ChildProcessWithoutNullStreams {
   const existing = processes.get(chatId);
-  if (existing) return existing;
+  if (existing) { dbg(chatId, "reusing existing process"); return existing; }
 
   const chat = chats.get(chatId);
   const resumeFlag = chat?.sessionId ? `--resume "${chat.sessionId}"` : "";
   const script = `claude --output-format stream-json --verbose --dangerously-skip-permissions ${resumeFlag}`;
+  const cwdExists = fs.existsSync(worktreePath);
+  dbg(chatId, `cwd exists=${cwdExists} path=${worktreePath}`);
+  if (!cwdExists) {
+    globalSend("chat:error", { chatId, error: `Worktree path does not exist: ${worktreePath}` });
+    throw new Error(`Worktree path does not exist: ${worktreePath}`);
+  }
+  dbg(chatId, `SHELL=${process.env.SHELL} PATH=${(process.env.PATH ?? "").slice(0, 120)}`);
+  dbg(chatId, `spawning: ${script.slice(0, 80)} cwd=${worktreePath}`);
   const proc = spawnShell(script, worktreePath);
+  dbg(chatId, `pid=${proc.pid} stdout=${proc.stdout ? "pipe" : "NULL"} stderr=${proc.stderr ? "pipe" : "NULL"}`);
 
   buffers.set(chatId, "");
 
+  const stderrChunks: string[] = [];
+  let responseTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  function armTimeout() {
+    if (responseTimeout) clearTimeout(responseTimeout);
+    dbg(chatId, "timeout armed (30s)");
+    responseTimeout = setTimeout(() => {
+      dbg(chatId, "TIMEOUT fired — killing process");
+      const msg = activeMessages.get(chatId);
+      if (msg) {
+        msg.done = true;
+        activeMessages.delete(chatId);
+        const stderrText = stderrChunks.join("").trim();
+        globalSend("chat:error", { chatId, error: stderrText || "No response from Claude (timeout)" });
+      }
+      proc.kill("SIGTERM");
+      processes.delete(chatId);
+    }, 30000);
+  }
+
   proc.stdout.on("data", (chunk: Buffer) => {
-    const buf = (buffers.get(chatId) ?? "") + chunk.toString();
+    const raw = chunk.toString();
+    dbg(chatId, `stdout ${raw.length}b: ${raw.slice(0, 120).replace(/\n/g, "↵")}`);
+    const buf = (buffers.get(chatId) ?? "") + raw;
     const lines = buf.split("\n");
     buffers.set(chatId, lines.pop() ?? "");
     for (const line of lines) {
       if (!line.trim()) continue;
-      try { processEvent(chatId, JSON.parse(line)); } catch {}
+      try {
+        const event = JSON.parse(line) as Record<string, unknown>;
+        dbg(chatId, `event type=${event.type} subtype=${event.subtype ?? "-"}`);
+        processEvent(chatId, event);
+      } catch {
+        const text = line.trim();
+        dbg(chatId, `non-JSON stdout: ${text.slice(0, 100)}`);
+        if (text && !text.startsWith("{")) {
+          const msg = activeMessages.get(chatId);
+          if (msg) globalSend("chat:error", { chatId, error: text });
+        }
+      }
     }
   });
 
-  proc.on("close", () => {
+  proc.stderr.on("data", (chunk: Buffer) => {
+    const text = chunk.toString();
+    dbg(chatId, `STDERR: ${text.trim().slice(0, 200)}`);
+    stderrChunks.push(text);
+    const msg = activeMessages.get(chatId);
+    if (msg && responseTimeout) {
+      if (responseTimeout) clearTimeout(responseTimeout);
+      responseTimeout = setTimeout(() => {
+        const m = activeMessages.get(chatId);
+        if (m) {
+          m.done = true;
+          activeMessages.delete(chatId);
+          globalSend("chat:error", { chatId, error: stderrChunks.join("").trim() });
+        }
+        proc.kill("SIGTERM");
+        processes.delete(chatId);
+        armers.delete(chatId);
+      }, 5000);
+    }
+  });
+
+  proc.on("close", (code) => {
+    dbg(chatId, `process closed code=${code}`);
+    if (responseTimeout) clearTimeout(responseTimeout);
     processes.delete(chatId);
+    armers.delete(chatId);
+    disarmers.delete(chatId);
     buffers.delete(chatId);
     const msg = activeMessages.get(chatId);
     if (msg) {
       msg.done = true;
       activeMessages.delete(chatId);
-      globalSend("chat:done", { chatId, messageId: msg.id });
+      if (code !== 0 && stderrChunks.length > 0) {
+        globalSend("chat:error", { chatId, error: stderrChunks.join("").trim() });
+      } else {
+        globalSend("chat:done", { chatId, messageId: msg.id });
+      }
     }
   });
 
   proc.on("error", (err) => {
+    dbg(chatId, `process error: ${err.message}`);
+    if (responseTimeout) clearTimeout(responseTimeout);
     globalSend("chat:error", { chatId, error: err.message });
     processes.delete(chatId);
+    armers.delete(chatId);
+    disarmers.delete(chatId);
   });
 
+  function disarmTimeout() {
+    if (responseTimeout) { clearTimeout(responseTimeout); responseTimeout = null; }
+  }
+
+  armers.set(chatId, armTimeout);
+  disarmers.set(chatId, disarmTimeout);
   processes.set(chatId, proc);
   return proc;
 }
@@ -222,8 +317,10 @@ export function sendMessage(chatId: string, userText: string, worktreePath: stri
   chatMessages.set(chatId, msgs);
   activeMessages.set(chatId, assistantMsg);
 
+  dbg(chatId, `sending message: ${userText.slice(0, 60)}`);
   const proc = ensureProcess(chatId, worktreePath);
   proc.stdin.write(userText + "\n");
+  armers.get(chatId)?.();
 }
 
 export function killAllProcesses() {
