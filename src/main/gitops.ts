@@ -156,13 +156,22 @@ export async function computeGitState(worktreeId: string, cwd: string): Promise<
   if (!slug) return localOnly(worktreeId, local, "No GitHub remote");
 
   try {
-    return await remoteGitState(worktreeId, local, slug);
+    return await remoteGitState(worktreeId, cwd, local, slug);
   } catch (e) {
     return localOnly(worktreeId, local, `GitHub unreachable: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
-async function remoteGitState(worktreeId: string, local: LocalState, slug: { owner: string; repo: string }): Promise<GitState> {
+function commitsAheadOfBase(cwd: string, base: string): number {
+  for (const ref of [`origin/${base}`, base]) {
+    try {
+      return Number(git(cwd, "rev-list", "--count", `${ref}..HEAD`));
+    } catch {}
+  }
+  return 0;
+}
+
+async function remoteGitState(worktreeId: string, cwd: string, local: LocalState, slug: { owner: string; repo: string }): Promise<GitState> {
   const noCi = { status: "none" as CiStatus, url: null };
   const repo = await getRepoInfo(slug.owner, slug.repo);
   const isBase = local.branch === repo.default_branch;
@@ -173,7 +182,7 @@ async function remoteGitState(worktreeId: string, local: LocalState, slug: { own
   const prRaw = await getPr(slug.owner, slug.repo, local.branch);
 
   if (!prRaw) {
-    if (local.ahead > 0 || !local.hasUpstream) return state(worktreeId, local.branch, false, "create-pr", null, noCi, null);
+    if (commitsAheadOfBase(cwd, repo.default_branch) > 0) return state(worktreeId, local.branch, false, "create-pr", null, noCi, null);
     return state(worktreeId, local.branch, false, "up-to-date", null, noCi, null);
   }
 
