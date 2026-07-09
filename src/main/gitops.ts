@@ -54,26 +54,33 @@ interface RepoInfo {
   allow_rebase_merge: boolean;
 }
 
+const repoInfoCache = new Map<string, RepoInfo>();
+
 async function getRepoInfo(owner: string, repo: string): Promise<RepoInfo> {
+  const key = `${owner}/${repo}`;
+  const cached = repoInfoCache.get(key);
+  if (cached) return cached;
   const d = (await json(await githubFetch(`/repos/${owner}/${repo}`))) as RepoInfo;
+  repoInfoCache.set(key, d);
   return d;
 }
 
-async function getPr(owner: string, repo: string, branch: string): Promise<{ number: number; url: string; draft: boolean; mergeable: boolean; sha: string; merged: boolean } | null> {
+async function getPr(owner: string, repo: string, branch: string): Promise<{ number: number; url: string; draft: boolean; mergeable: boolean; mergeableState: string; sha: string; merged: boolean } | null> {
   const list = (await json(
     await githubFetch(`/repos/${owner}/${repo}/pulls?head=${owner}:${encodeURIComponent(branch)}&state=all&per_page=10`)
-  )) as Array<{ number: number; html_url: string; draft: boolean; state: string; merged_at: string | null; head: { sha: string } }>;
+  )) as Array<{ number: number; state: string }>;
   if (list.length === 0) return null;
   const open = list.find((p) => p.state === "open");
   const chosen = open ?? list[0]!;
   const full = (await json(await githubFetch(`/repos/${owner}/${repo}/pulls/${chosen.number}`))) as {
-    number: number; html_url: string; draft: boolean; mergeable: boolean | null; merged: boolean; head: { sha: string };
+    number: number; html_url: string; draft: boolean; mergeable: boolean | null; mergeable_state: string; merged: boolean; head: { sha: string };
   };
   return {
     number: full.number,
     url: full.html_url,
     draft: full.draft,
     mergeable: full.mergeable !== false,
+    mergeableState: full.mergeable_state,
     sha: full.head.sha,
     merged: full.merged,
   };
@@ -186,17 +193,25 @@ async function remoteGitState(worktreeId: string, cwd: string, local: LocalState
     return state(worktreeId, local.branch, false, "up-to-date", null, noCi, null);
   }
 
-  const ci = await getCi(slug.owner, slug.repo, prRaw.sha);
-  const reviewDecision = prRaw.merged ? null : await getReviewDecision(slug.owner, slug.repo, prRaw.number);
+  const [ci, reviewDecision] = await Promise.all([
+    getCi(slug.owner, slug.repo, prRaw.sha),
+    prRaw.merged ? Promise.resolve(null as ReviewDecision) : getReviewDecision(slug.owner, slug.repo, prRaw.number),
+  ]);
   const pr: PrInfo = { number: prRaw.number, url: prRaw.url, draft: prRaw.draft, reviewDecision, mergeable: prRaw.mergeable };
 
   if (prRaw.merged) return state(worktreeId, local.branch, false, "merged", pr, ci, null);
   if (local.ahead > 0 && local.hasUpstream) return state(worktreeId, local.branch, false, "push", pr, ci, null);
   if (ci.status === "running" || ci.status === "queued") return state(worktreeId, local.branch, false, "ci-running", pr, ci, null);
   if (ci.status === "failure") return state(worktreeId, local.branch, false, "ci-failed", pr, ci, "CI checks failed");
-  if (reviewDecision === "changes_requested") return state(worktreeId, local.branch, false, "changes-requested", pr, ci, null);
-  if (reviewDecision === "approved" && pr.mergeable) return state(worktreeId, local.branch, false, "merge", pr, ci, null);
-  return state(worktreeId, local.branch, false, "awaiting-review", pr, ci, null);
+  if (reviewDecision === "changes_requested") return state(worktreeId, local.branch, false, "changes-requested", pr, ci, "Changes requested");
+
+  const ms = prRaw.mergeableState;
+  if (ms === "dirty") return state(worktreeId, local.branch, false, "awaiting-review", pr, ci, "Merge conflicts");
+  if (ms === "behind") return state(worktreeId, local.branch, false, "awaiting-review", pr, ci, "Branch is behind base");
+  if (ms === "blocked") return state(worktreeId, local.branch, false, "awaiting-review", pr, ci, "Blocked — review or checks required");
+  if (ms === "draft") return state(worktreeId, local.branch, false, "awaiting-review", pr, ci, "Draft — mark ready on GitHub");
+  if (ms === "clean" || ms === "unstable" || ms === "has_hooks") return state(worktreeId, local.branch, false, "merge", pr, ci, null);
+  return state(worktreeId, local.branch, false, "awaiting-review", pr, ci, "Checking mergeability…");
 }
 
 function aiCommitMessage(cwd: string): string {
