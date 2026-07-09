@@ -12,6 +12,7 @@ import type { ProviderId } from "../shared/types.provider";
 import { chats as chatStore, loadChats, createChat, listChats, deleteChat, getMessages, sendMessage, setSender, killAllProcesses, fetchSlashCommands } from "./chat";
 import { createTerminal, writeTerminal, resizeTerminal, destroyTerminal, killAllTerminals, setTerminalSender } from "./terminal";
 import { getWorkspace, startWorkspace, stopWorkspace, killAllWorkspaces, setWorkspaceSender } from "./workspace";
+import { generateWorktreeName } from "./names";
 
 const dev = process.env.NODE_ENV !== "production";
 
@@ -130,15 +131,25 @@ handle("repo:remove", ({ id }) => {
 handle("worktree:create", ({ repoId, branch }) => {
   const repo = repos.get(repoId);
   if (!repo) throw new Error(`Repo ${repoId} not found`);
-  const slug = branch.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase();
-  const worktreePath = path.join(os.homedir(), "schema", repo.name, slug);
+
+  const existingBranches = new Set(
+    execSync("git branch --format='%(refname:short)'", { cwd: repo.path })
+      .toString().split("\n").map((s) => s.trim()).filter(Boolean)
+  );
+  const repoDir = path.join(os.homedir(), "schema", repo.name);
+  const name = branch?.trim()
+    ? branch.trim()
+    : generateWorktreeName((n) => existingBranches.has(n) || fs.existsSync(path.join(repoDir, n)));
+
+  const slug = name.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase();
+  const worktreePath = path.join(repoDir, slug);
   fs.mkdirSync(path.dirname(worktreePath), { recursive: true });
-  const branchExists = execSync(`git branch --list "${branch}"`, { cwd: repo.path }).toString().trim() !== "";
+  const branchExists = existingBranches.has(name);
   const cmd = branchExists
-    ? `git worktree add "${worktreePath}" "${branch}"`
-    : `git worktree add "${worktreePath}" -b "${branch}"`;
+    ? `git worktree add "${worktreePath}" "${name}"`
+    : `git worktree add "${worktreePath}" -b "${name}"`;
   execSync(cmd, { cwd: repo.path });
-  const wt: Worktree = { id: crypto.randomUUID(), repoId, branch, path: worktreePath, isMain: false };
+  const wt: Worktree = { id: crypto.randomUUID(), repoId, branch: name, path: worktreePath, isMain: false };
   worktrees.set(wt.id, wt);
   return wt;
 });
