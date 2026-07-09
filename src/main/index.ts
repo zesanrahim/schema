@@ -12,6 +12,8 @@ import type { ProviderId } from "../shared/types.provider";
 import { chats as chatStore, loadChats, createChat, listChats, deleteChat, getMessages, sendMessage, setSender, killAllProcesses, fetchSlashCommands } from "./chat";
 import { createTerminal, writeTerminal, resizeTerminal, destroyTerminal, killAllTerminals, setTerminalSender } from "./terminal";
 import { getWorkspace, startWorkspace, stopWorkspace, killAllWorkspaces, setWorkspaceSender } from "./workspace";
+import { spawnLoginShell } from "./shell";
+import { planWorktreeSetup } from "./setup";
 
 const dev = process.env.NODE_ENV !== "production";
 
@@ -37,6 +39,37 @@ function handle<K extends keyof IpcInvoke>(
   handler: (args: IpcInvoke[K]["args"]) => IpcInvoke[K]["result"] | Promise<IpcInvoke[K]["result"]>
 ) {
   ipcMain.handle(channel as string, (_event, args: IpcInvoke[K]["args"]) => handler(args));
+}
+
+function runSetup(worktreeId: string, worktreePath: string, cmd: string) {
+  send("worktree:install", { worktreeId, status: "installing" });
+  const proc = spawnLoginShell(cmd, {
+    cwd: worktreePath,
+    env: { ...process.env },
+    stdio: "ignore",
+  });
+  proc.on("close", (code) => {
+    if (code === 0) send("worktree:install", { worktreeId, status: "done" });
+    else send("worktree:install", { worktreeId, status: "error", error: `exited with code ${code}` });
+  });
+  proc.on("error", (err) => {
+    send("worktree:install", { worktreeId, status: "error", error: err.message });
+  });
+}
+
+function setupWorktree(worktreeId: string, worktreePath: string, repo: Repo) {
+  const plan = planWorktreeSetup(repo, worktreePath);
+  if (plan.action === "none") return;
+  if (plan.action === "run") {
+    runSetup(worktreeId, worktreePath, plan.cmd);
+    return;
+  }
+  try {
+    fs.symlinkSync(path.join(repo.path, plan.dir), path.join(worktreePath, plan.dir), "dir");
+    send("worktree:install", { worktreeId, status: "linked" });
+  } catch {
+    if (plan.fallback) runSetup(worktreeId, worktreePath, plan.fallback);
+  }
 }
 
 function reposStorePath() {
@@ -140,6 +173,9 @@ handle("worktree:create", ({ repoId, branch }) => {
   execSync(cmd, { cwd: repo.path });
   const wt: Worktree = { id: crypto.randomUUID(), repoId, branch, path: worktreePath, isMain: false };
   worktrees.set(wt.id, wt);
+
+  setupWorktree(wt.id, worktreePath, repo);
+
   return wt;
 });
 
@@ -191,6 +227,14 @@ handle("repo:set-dev-command", ({ id, command }) => {
   const repo = repos.get(id);
   if (!repo) throw new Error(`Repo ${id} not found`);
   repo.devCommand = command;
+  saveRepos();
+});
+
+handle("repo:set-setup-command", ({ id, command }) => {
+  const repo = repos.get(id);
+  if (!repo) throw new Error(`Repo ${id} not found`);
+  if (command) repo.setupCommand = command;
+  else delete repo.setupCommand;
   saveRepos();
 });
 

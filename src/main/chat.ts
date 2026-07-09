@@ -1,11 +1,13 @@
-import { spawn, ChildProcessWithoutNullStreams } from "child_process";
+import { ChildProcessWithoutNullStreams } from "child_process";
 import fs from "fs";
 import path from "path";
 import { app } from "electron";
 import type { Chat, Message, ToolCall, Sender } from "../shared/types";
 import type { ProviderId } from "../shared/types.provider";
+import { toolInputPreview } from "../shared/toolPreview";
 import { getAnthropicEnv } from "./anthropic";
 import { getProvider } from "./providers";
+import { spawnLoginShell } from "./shell";
 
 export const chats = new Map<string, Chat>();
 export const chatMessages = new Map<string, Message[]>();
@@ -92,18 +94,11 @@ function stopProcess(chatId: string) {
 }
 
 function spawnShell(script: string, cwd: string): ChildProcessWithoutNullStreams {
-  const shell = process.env.SHELL ?? "/bin/zsh";
-  return spawn(shell, ["-lc", script], {
+  return spawnLoginShell(script, {
     cwd,
     env: { ...process.env, ...getAnthropicEnv() },
     stdio: ["pipe", "pipe", "pipe"],
   }) as ChildProcessWithoutNullStreams;
-}
-
-function inputPreview(input: Record<string, unknown>): string {
-  const val = input.file_path ?? input.command ?? input.pattern ?? Object.values(input)[0];
-  if (typeof val !== "string") return "";
-  return val.length > 60 ? val.slice(0, 60) + "…" : val;
 }
 
 function dispatchEvents(chatId: string, rawEvent: Record<string, unknown>) {
@@ -119,7 +114,7 @@ function dispatchEvents(chatId: string, rawEvent: Record<string, unknown>) {
     } else if (ev.type === "tool_start" && msg) {
       const tool: ToolCall = { id: ev.toolId, name: ev.toolName, input: ev.input };
       msg.toolCalls.push(tool);
-      globalSend("chat:tool-start", { chatId, messageId: msg.id, tool: { ...tool, preview: inputPreview(tool.input) } });
+      globalSend("chat:tool-start", { chatId, messageId: msg.id, tool: { ...tool, preview: toolInputPreview(tool.input, 60) } });
     } else if (ev.type === "tool_done" && msg) {
       const tool = msg.toolCalls.find((t) => t.id === ev.toolId);
       if (tool) {
@@ -186,6 +181,7 @@ function ensureProcess(chatId: string, worktreePath: string): ChildProcessWithou
   proc.stdout.on("data", (chunk: Buffer) => {
     const raw = chunk.toString();
     dbg(chatId, `stdout ${raw.length}b: ${raw.slice(0, 120).replace(/\n/g, "↵")}`);
+    armTimeout();
     const buf = (buffers.get(chatId) ?? "") + raw;
     const lines = buf.split("\n");
     buffers.set(chatId, lines.pop() ?? "");
@@ -209,22 +205,10 @@ function ensureProcess(chatId: string, worktreePath: string): ChildProcessWithou
   proc.stderr.on("data", (chunk: Buffer) => {
     const text = chunk.toString();
     dbg(chatId, `STDERR: ${text.trim().slice(0, 200)}`);
+    // Accumulate for diagnostics only. The Claude CLI writes non-fatal noise to
+    // stderr; the real completion/failure signals come via stdout `result`
+    // events and the `close` handler, so we don't kill on stderr here.
     stderrChunks.push(text);
-    const msg = activeMessages.get(chatId);
-    if (msg && responseTimeout) {
-      if (responseTimeout) clearTimeout(responseTimeout);
-      responseTimeout = setTimeout(() => {
-        const m = activeMessages.get(chatId);
-        if (m) {
-          m.done = true;
-          activeMessages.delete(chatId);
-          globalSend("chat:error", { chatId, error: stderrChunks.join("").trim() });
-        }
-        proc.kill("SIGTERM");
-        processes.delete(chatId);
-        armers.delete(chatId);
-      }, 5000);
-    }
   });
 
   proc.on("close", (code) => {
@@ -302,8 +286,9 @@ export function sendMessage(chatId: string, userText: string, worktreePath: stri
   activeMessages.set(chatId, assistantMsg);
 
   dbg(chatId, `sending message: ${userText.slice(0, 60)}`);
+  const provider = getProvider(chat.providerId as ProviderId);
   const proc = ensureProcess(chatId, worktreePath);
-  proc.stdin.write(userText + "\n");
+  proc.stdin.write(provider.formatInput(userText));
   armers.get(chatId)?.();
 }
 

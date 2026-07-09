@@ -4,7 +4,7 @@ import { ChatView } from "./ChatView";
 import { DiffView } from "./DiffView";
 import { RightSidebar } from "./RightSidebar";
 import { Settings } from "./Settings";
-import { IconSettings, IconPlus } from "./icons";
+import { IconSettings, IconPlus, IconPanel } from "./icons";
 
 type View = "main" | "settings";
 type DiffOverlay = { worktreeId: string; filePath: string };
@@ -15,15 +15,6 @@ function generateBranch() {
   const dd = String(now.getDate()).padStart(2, "0");
   const rand = Math.random().toString(36).slice(2, 5);
   return `wt-${mm}${dd}-${rand}`;
-}
-
-function IconPanel() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
-      <rect x="1" y="1" width="13" height="13" rx="1" stroke="currentColor" strokeWidth="1.2"/>
-      <line x1="10" y1="1" x2="10" y2="14" stroke="currentColor" strokeWidth="1.2"/>
-    </svg>
-  );
 }
 
 export function App() {
@@ -37,10 +28,24 @@ export function App() {
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [pushing, setPushing] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<Map<string, Workspace>>(new Map());
+  const [installStatuses, setInstallStatuses] = useState<Map<string, import("../shared/types").InstallStatus>>(new Map());
 
   useEffect(() => {
     return window.api.on("workspace:update", ({ workspace }) => {
       setWorkspaces((prev) => new Map(prev).set(workspace.worktreeId, workspace));
+    });
+  }, []);
+
+  useEffect(() => {
+    return window.api.on("worktree:install", ({ worktreeId, status }) => {
+      setInstallStatuses((prev) => {
+        const next = new Map(prev);
+        if (status === "done" || status === "linked") {
+          setTimeout(() => setInstallStatuses((m) => { const n = new Map(m); n.delete(worktreeId); return n; }), 3000);
+        }
+        next.set(worktreeId, status);
+        return next;
+      });
     });
   }, []);
 
@@ -265,6 +270,7 @@ export function App() {
                     const ws = workspaces.get(wt.id);
                     const wsRunning = ws?.status === "running" || ws?.status === "starting";
                     const dotColor = ws?.status === "running" ? "var(--green)" : ws?.status === "starting" ? "#d4a847" : ws?.status === "error" ? "var(--red)" : null;
+                    const installStatus = installStatuses.get(wt.id);
                     return (
                       <div
                         key={wt.id}
@@ -293,6 +299,18 @@ export function App() {
                           {wt.branch}
                           {wt.isMain && <span style={{ color: "var(--text-3)", marginLeft: 4 }}>(main)</span>}
                         </span>
+                        {installStatus && (
+                          <span style={{
+                            fontSize: 9,
+                            fontWeight: 600,
+                            letterSpacing: "0.05em",
+                            textTransform: "uppercase",
+                            color: installStatus === "error" ? "var(--red)" : installStatus === "done" || installStatus === "linked" ? "var(--green)" : "#d4a847",
+                            flexShrink: 0,
+                          }}>
+                            {installStatus === "installing" ? "installing…" : installStatus === "linked" ? "linked" : installStatus === "done" ? "ready" : "error"}
+                          </span>
+                        )}
                         {wsRunning && ws?.port && (
                           <span
                             onClick={(e) => { e.stopPropagation(); window.open(ws.url!, "_blank"); }}

@@ -1,6 +1,7 @@
-import { spawn, ChildProcess } from "child_process";
+import { ChildProcess } from "child_process";
 import { shell } from "electron";
 import type { Sender, Workspace } from "../shared/types";
+import { spawnLoginShell } from "./shell";
 
 const workspaces = new Map<string, Workspace>();
 const processes = new Map<string, ChildProcess>();
@@ -26,6 +27,10 @@ const portPatterns = [
   /:(\d{4,5})(?:\/|\s|$)/m,
 ];
 
+function stripAnsi(text: string): string {
+  return text.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
 function detectPort(text: string): number | null {
   for (const re of portPatterns) {
     const match = text.match(re);
@@ -44,15 +49,16 @@ export function startWorkspace(worktreeId: string, cwd: string, command: string,
   workspaces.set(worktreeId, ws);
   emit(ws);
 
-  const userShell = process.env.SHELL ?? "/bin/zsh";
-  const proc = spawn(userShell, ["-lc", command], { cwd, env: { ...process.env } });
+  const proc = spawnLoginShell(command, {
+    cwd,
+    env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" },
+  });
   processes.set(worktreeId, proc);
 
   let gotOutput = false;
+  let outputBuffer = "";
 
   function onData(chunk: Buffer) {
-    const text = chunk.toString();
-
     if (!gotOutput) {
       gotOutput = true;
       ws.status = "running";
@@ -60,7 +66,8 @@ export function startWorkspace(worktreeId: string, cwd: string, command: string,
     }
 
     if (!ws.url) {
-      const port = detectPort(text);
+      outputBuffer += stripAnsi(chunk.toString());
+      const port = detectPort(outputBuffer);
       if (port) {
         ws.port = port;
         const slug = branch.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-|-$/g, "");
