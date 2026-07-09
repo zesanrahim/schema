@@ -4,6 +4,7 @@ import { ChatView } from "./ChatView";
 import { DiffView } from "./DiffView";
 import { RightSidebar } from "./RightSidebar";
 import { Settings } from "./Settings";
+import { GitButton, prefetchGitStates } from "./GitButton";
 import { IconSettings, IconPlus, IconPanel } from "./icons";
 
 type View = "main" | "settings";
@@ -19,7 +20,6 @@ export function App() {
   const [selectedWorktreeId, setSelectedWorktreeId] = useState<string | null>(null);
   const [chats, setChats] = useState<Chat[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
-  const [pushing, setPushing] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<Map<string, Workspace>>(new Map());
   const [installStatuses, setInstallStatuses] = useState<Map<string, import("../shared/types").InstallStatus>>(new Map());
 
@@ -44,7 +44,10 @@ export function App() {
 
   useEffect(() => {
     window.api.invoke("repo:list").then(setRepos);
-    window.api.invoke("worktree:list").then(setWorktrees);
+    window.api.invoke("worktree:list").then((wts) => {
+      setWorktrees(wts);
+      prefetchGitStates(wts.map((w) => w.id), 3);
+    });
   }, []);
 
   useEffect(() => {
@@ -106,14 +109,6 @@ export function App() {
     if (selectedWorktreeId === id) setSelectedWorktreeId(null);
   }
 
-  async function commitAndPush(worktreeId: string) {
-    setPushing(worktreeId);
-    try {
-      await window.api.invoke("worktree:commit-push", { id: worktreeId });
-    } finally {
-      setPushing(null);
-    }
-  }
 
   function updateRepo(updated: Repo) {
     setRepos((prev) => prev.map((r) => r.id === updated.id ? updated : r));
@@ -139,20 +134,7 @@ export function App() {
         <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", letterSpacing: "0.04em" }}>schema</span>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {selectedWorktreeId && (
-            <button
-              onClick={() => commitAndPush(selectedWorktreeId)}
-              disabled={pushing === selectedWorktreeId}
-              style={{
-                background: "none",
-                border: "1px solid var(--border-2)",
-                color: pushing === selectedWorktreeId ? "var(--text-3)" : "var(--text-2)",
-                padding: "4px 10px",
-                fontSize: 11,
-                opacity: pushing === selectedWorktreeId ? 0.5 : 1,
-              }}
-            >
-              {pushing === selectedWorktreeId ? "Pushing…" : "↑ Commit & Push"}
-            </button>
+            <GitButton worktreeId={selectedWorktreeId} onConnect={() => setView("settings")} />
           )}
           {selectedWorktree && (
             <button

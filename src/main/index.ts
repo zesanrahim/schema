@@ -16,6 +16,7 @@ import { getWorkspace, startWorkspace, stopWorkspace, killAllWorkspaces, setWork
 import { spawnLoginShell } from "./shell";
 import { planWorktreeSetup } from "./setup";
 import { generateWorktreeName } from "./names";
+import { computeGitState, commitPush, pushOnly, createDraftPr, mergePr } from "./gitops";
 
 const dev = process.env.NODE_ENV !== "production";
 
@@ -206,21 +207,36 @@ handle("worktree:remove", ({ id }) => {
   worktrees.delete(id);
 });
 
-handle("worktree:commit-push", ({ id }) => {
-  const wt = worktrees.get(id);
-  if (!wt) throw new Error(`Worktree ${id} not found`);
-  execSync("git add -A", { cwd: wt.path });
-  const stat = execSync("git diff --cached --stat", { cwd: wt.path }).toString().trim();
-  if (!stat) throw new Error("Nothing to commit");
-  const lines = stat.split("\n");
-  const summary = lines.at(-1)?.trim() ?? "";
-  const changed = lines.slice(0, -1).map((l) => l.trim().split(" ")[0]);
-  const commitMessage = changed.length === 1
-    ? `update ${changed[0]}`
-    : `update ${changed.length} files (${summary})`;
-  execSync(`git commit -m "${commitMessage}"`, { cwd: wt.path });
-  execSync("git push", { cwd: wt.path });
-  return { commitMessage };
+function worktreePathOf(worktreeId: string): string {
+  const wt = worktrees.get(worktreeId);
+  if (!wt) throw new Error(`Worktree ${worktreeId} not found`);
+  return wt.path;
+}
+
+handle("git:state", ({ worktreeId }) => computeGitState(worktreeId, worktreePathOf(worktreeId)));
+
+handle("git:commit-push", async ({ worktreeId }) => {
+  const cwd = worktreePathOf(worktreeId);
+  commitPush(cwd);
+  return computeGitState(worktreeId, cwd);
+});
+
+handle("git:push", async ({ worktreeId }) => {
+  const cwd = worktreePathOf(worktreeId);
+  pushOnly(cwd);
+  return computeGitState(worktreeId, cwd);
+});
+
+handle("git:create-pr", async ({ worktreeId }) => {
+  const cwd = worktreePathOf(worktreeId);
+  await createDraftPr(cwd);
+  return computeGitState(worktreeId, cwd);
+});
+
+handle("git:merge", async ({ worktreeId }) => {
+  const cwd = worktreePathOf(worktreeId);
+  await mergePr(cwd);
+  return computeGitState(worktreeId, cwd);
 });
 
 handle("chat:slash-commands", () => {

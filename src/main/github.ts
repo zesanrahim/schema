@@ -123,3 +123,22 @@ export async function getAuthStatus(): Promise<GitHubUser | null> {
     return null;
   }
 }
+
+export function hasToken(): boolean {
+  return loadToken() !== null;
+}
+
+export async function githubFetch(pathOrUrl: string, init?: RequestInit): Promise<Response> {
+  const token = loadToken();
+  if (!token) throw new Error("Not connected to GitHub");
+  const url = pathOrUrl.startsWith("http") ? pathOrUrl : `https://api.github.com${pathOrUrl}`;
+  return fetch(url, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "User-Agent": "schema-app",
+      Accept: "application/vnd.github+json",
+      ...(init?.headers ?? {}),
+    },
+  });
+}
