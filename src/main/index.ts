@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, globalShortcut, dialog } from "electron";
 import path from "path";
 import fs from "fs";
 import os from "os";
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
 import { createHash } from "crypto";
 import type { IpcInvoke, IpcEvents, Repo, Worktree } from "../shared/types";
 
@@ -15,6 +15,7 @@ import { createTerminal, writeTerminal, resizeTerminal, destroyTerminal, killAll
 import { getWorkspace, startWorkspace, stopWorkspace, killAllWorkspaces, setWorkspaceSender } from "./workspace";
 import { spawnLoginShell } from "./shell";
 import { planWorktreeSetup } from "./setup";
+import { generateWorktreeName } from "./names";
 
 const dev = process.env.NODE_ENV !== "production";
 
@@ -169,15 +170,25 @@ handle("repo:remove", ({ id }) => {
 handle("worktree:create", ({ repoId, branch }) => {
   const repo = repos.get(repoId);
   if (!repo) throw new Error(`Repo ${repoId} not found`);
-  const slug = branch.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase();
-  const worktreePath = path.join(os.homedir(), "schema", repo.name, slug);
+
+  const existingBranches = new Set(
+    execSync("git branch --format='%(refname:short)'", { cwd: repo.path })
+      .toString().split("\n").map((s) => s.trim()).filter(Boolean)
+  );
+  const repoDir = path.join(os.homedir(), "schema", repo.name);
+  const name = branch?.trim()
+    ? branch.trim()
+    : generateWorktreeName((n) => existingBranches.has(n) || fs.existsSync(path.join(repoDir, n)));
+
+  const slug = name.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase();
+  const worktreePath = path.join(repoDir, slug);
   fs.mkdirSync(path.dirname(worktreePath), { recursive: true });
-  const branchExists = execSync(`git branch --list "${branch}"`, { cwd: repo.path }).toString().trim() !== "";
-  const cmd = branchExists
-    ? `git worktree add "${worktreePath}" "${branch}"`
-    : `git worktree add "${worktreePath}" -b "${branch}"`;
-  execSync(cmd, { cwd: repo.path });
-  const wt: Worktree = { id: worktreeIdFor(worktreePath), repoId, branch, path: worktreePath, isMain: false };
+  const branchExists = existingBranches.has(name);
+  const args = branchExists
+    ? ["worktree", "add", worktreePath, name]
+    : ["worktree", "add", worktreePath, "-b", name];
+  execFileSync("git", args, { cwd: repo.path });
+  const wt: Worktree = { id: worktreeIdFor(worktreePath), repoId, branch: name, path: worktreePath, isMain: false };
   worktrees.set(wt.id, wt);
 
   setupWorktree(wt.id, worktreePath, repo);

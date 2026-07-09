@@ -9,13 +9,6 @@ import { IconSettings, IconPlus, IconPanel } from "./icons";
 type View = "main" | "settings";
 type DiffOverlay = { worktreeId: string; filePath: string };
 
-function generateBranch() {
-  const now = new Date();
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
-  const dd = String(now.getDate()).padStart(2, "0");
-  const rand = Math.random().toString(36).slice(2, 5);
-  return `wt-${mm}${dd}-${rand}`;
-}
 
 export function App() {
   const [view, setView] = useState<View>("main");
@@ -102,8 +95,7 @@ export function App() {
   }
 
   async function createWorktree(repoId: string) {
-    const branch = generateBranch();
-    const wt = await window.api.invoke("worktree:create", { repoId, branch });
+    const wt = await window.api.invoke("worktree:create", { repoId });
     setWorktrees((prev) => [...prev, wt]);
     setSelectedWorktreeId(wt.id);
   }
