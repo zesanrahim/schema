@@ -81,14 +81,25 @@ export function GitButton({ worktreeId, onConnect }: { worktreeId: string; onCon
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
       {state.pr && (
-        <span
-          onClick={() => window.open(state.pr!.url, "_blank")}
-          title={state.ci.url ? "CI: " + state.ci.status : undefined}
-          style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--text-3)", cursor: "pointer" }}
+        <a
+          href={state.pr.url}
+          onClick={(e) => { e.preventDefault(); window.open(state.pr!.url, "_blank"); }}
+          title={`Open PR #${state.pr.number} on GitHub${state.ci.url ? " · CI: " + state.ci.status : ""}`}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
+            fontSize: 11,
+            color: "var(--accent)",
+            textDecoration: "underline",
+            textUnderlineOffset: 2,
+            cursor: "pointer",
+          }}
         >
-          <span style={{ width: 7, height: 7, borderRadius: "50%", background: ciColor(state.ci.status) }} />
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: ciColor(state.ci.status), flexShrink: 0 }} />
           #{state.pr.number}{state.pr.draft ? " (draft)" : ""}
-        </span>
+          <span style={{ fontSize: 9, opacity: 0.8 }}>↗</span>
+        </a>
       )}
       <button
         onClick={runAction}
