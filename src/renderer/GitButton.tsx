@@ -19,8 +19,22 @@ function ciColor(status: CiStatus): string {
   return "var(--text-3)";
 }
 
+const stateCache = new Map<string, GitState>();
+
+export async function prefetchGitStates(worktreeIds: string[], concurrency = 4): Promise<void> {
+  const queue = worktreeIds.filter((id) => !stateCache.has(id));
+  async function worker() {
+    while (queue.length) {
+      const id = queue.shift();
+      if (!id) return;
+      try { stateCache.set(id, await window.api.invoke("git:state", { worktreeId: id })); } catch {}
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker));
+}
+
 export function GitButton({ worktreeId, onConnect }: { worktreeId: string; onConnect: () => void }) {
-  const [state, setState] = useState<GitState | null>(null);
+  const [state, setState] = useState<GitState | null>(() => stateCache.get(worktreeId) ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -28,6 +42,7 @@ export function GitButton({ worktreeId, onConnect }: { worktreeId: string; onCon
   const refresh = useCallback(async () => {
     try {
       const s = await window.api.invoke("git:state", { worktreeId });
+      stateCache.set(worktreeId, s);
       setState(s);
       setError(null);
     } catch (e) {
@@ -39,7 +54,7 @@ export function GitButton({ worktreeId, onConnect }: { worktreeId: string; onCon
   }, [worktreeId]);
 
   useEffect(() => {
-    setState(null);
+    setState(stateCache.get(worktreeId) ?? null);
     setError(null);
     refresh();
   }, [worktreeId, refresh]);

@@ -4,7 +4,7 @@ import { ChatView } from "./ChatView";
 import { DiffView } from "./DiffView";
 import { RightSidebar } from "./RightSidebar";
 import { Settings } from "./Settings";
-import { GitButton } from "./GitButton";
+import { GitButton, prefetchGitStates } from "./GitButton";
 import { IconSettings, IconPlus, IconPanel } from "./icons";
 
 type View = "main" | "settings";
@@ -44,7 +44,10 @@ export function App() {
 
   useEffect(() => {
     window.api.invoke("repo:list").then(setRepos);
-    window.api.invoke("worktree:list").then(setWorktrees);
+    window.api.invoke("worktree:list").then((wts) => {
+      setWorktrees(wts);
+      prefetchGitStates(wts.map((w) => w.id), 3);
+    });
   }, []);
 
   useEffect(() => {
