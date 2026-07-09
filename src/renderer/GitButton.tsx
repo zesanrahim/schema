@@ -10,6 +10,7 @@ const ACTION_CHANNEL: Partial<Record<GitAction, "git:commit-push" | "git:push" |
 
 const ACCENT_ACTIONS: GitAction[] = ["commit-push", "push", "create-pr", "merge", "connect"];
 const DANGER_ACTIONS: GitAction[] = ["ci-failed", "changes-requested"];
+const WAITING_ACTIONS: GitAction[] = ["ci-running", "ci-failed", "changes-requested", "awaiting-review"];
 
 function ciColor(status: CiStatus): string {
   if (status === "success") return "var(--green)";
@@ -45,11 +46,16 @@ export function GitButton({ worktreeId, onConnect }: { worktreeId: string; onCon
 
   useEffect(() => {
     if (timer.current) clearInterval(timer.current);
-    if (state?.ci.status === "running" || state?.ci.status === "queued") {
+    if (state && WAITING_ACTIONS.includes(state.action)) {
       timer.current = setInterval(refresh, 15000);
     }
     return () => { if (timer.current) clearInterval(timer.current); };
   }, [state, refresh]);
+
+  useEffect(() => {
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [refresh]);
 
   if (error) {
     if (!import.meta.env.DEV) return null;
