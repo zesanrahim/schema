@@ -51,7 +51,10 @@ export function GitButton({ worktreeId, onConnect }: { worktreeId: string; onCon
     return () => { if (timer.current) clearInterval(timer.current); };
   }, [state, refresh]);
 
-  if (error) return <span style={{ fontSize: 11, color: "var(--red)", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={error}>git: {error}</span>;
+  if (error) {
+    if (!import.meta.env.DEV) return null;
+    return <span style={{ fontSize: 11, color: "var(--red)", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={error}>git: {error}</span>;
+  }
   if (!state || state.action === "up-to-date") return null;
 
   async function runAction() {
