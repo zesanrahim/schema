@@ -13,6 +13,7 @@ import { chats as chatStore, loadChats, createChat, listChats, deleteChat, getMe
 import { createTerminal, writeTerminal, resizeTerminal, destroyTerminal, killAllTerminals, setTerminalSender } from "./terminal";
 import { getWorkspace, startWorkspace, stopWorkspace, killAllWorkspaces, setWorkspaceSender } from "./workspace";
 import { spawnLoginShell } from "./shell";
+import { planWorktreeSetup } from "./setup";
 
 const dev = process.env.NODE_ENV !== "production";
 
@@ -40,34 +41,6 @@ function handle<K extends keyof IpcInvoke>(
   ipcMain.handle(channel as string, (_event, args: IpcInvoke[K]["args"]) => handler(args));
 }
 
-function detectPackageManager(repoPath: string): { cmd: string; lockfile: string } | null {
-  const managers = [
-    { cmd: "pnpm", lockfile: "pnpm-lock.yaml" },
-    { cmd: "bun", lockfile: "bun.lockb" },
-    { cmd: "yarn", lockfile: "yarn.lock" },
-    { cmd: "npm", lockfile: "package-lock.json" },
-  ];
-  for (const m of managers) {
-    if (fs.existsSync(path.join(repoPath, m.lockfile))) return m;
-  }
-  return fs.existsSync(path.join(repoPath, "package.json")) ? { cmd: "npm", lockfile: "" } : null;
-}
-
-function packageJsonChanged(mainPath: string, worktreePath: string): boolean {
-  try {
-    const a = fs.readFileSync(path.join(mainPath, "package.json"), "utf8");
-    const b = fs.readFileSync(path.join(worktreePath, "package.json"), "utf8");
-    const depsKeys = ["dependencies", "devDependencies", "peerDependencies"];
-    const extract = (src: string) => {
-      const p = JSON.parse(src);
-      return JSON.stringify(Object.fromEntries(depsKeys.map((k) => [k, p[k] ?? {}])));
-    };
-    return extract(a) !== extract(b);
-  } catch {
-    return false;
-  }
-}
-
 function runSetup(worktreeId: string, worktreePath: string, cmd: string) {
   send("worktree:install", { worktreeId, status: "installing" });
   const proc = spawnLoginShell(cmd, {
@@ -85,28 +58,18 @@ function runSetup(worktreeId: string, worktreePath: string, cmd: string) {
 }
 
 function setupWorktree(worktreeId: string, worktreePath: string, repo: Repo) {
-  if (repo.setupCommand) {
-    runSetup(worktreeId, worktreePath, repo.setupCommand);
+  const plan = planWorktreeSetup(repo, worktreePath);
+  if (plan.action === "none") return;
+  if (plan.action === "run") {
+    runSetup(worktreeId, worktreePath, plan.cmd);
     return;
   }
-
-  const pm = detectPackageManager(repo.path);
-  if (!pm) return;
-
-  const mainModules = path.join(repo.path, "node_modules");
-  const wtModules = path.join(worktreePath, "node_modules");
-
-  if (fs.existsSync(wtModules)) return;
-
-  if (fs.existsSync(mainModules) && !packageJsonChanged(repo.path, worktreePath)) {
-    try {
-      fs.symlinkSync(mainModules, wtModules, "dir");
-      send("worktree:install", { worktreeId, status: "linked" });
-      return;
-    } catch {}
+  try {
+    fs.symlinkSync(path.join(repo.path, plan.dir), path.join(worktreePath, plan.dir), "dir");
+    send("worktree:install", { worktreeId, status: "linked" });
+  } catch {
+    if (plan.fallback) runSetup(worktreeId, worktreePath, plan.fallback);
   }
-
-  runSetup(worktreeId, worktreePath, `${pm.cmd} install`);
 }
 
 function reposStorePath() {
