@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, globalShortcut, dialog } from "electron";
 import path from "path";
 import fs from "fs";
 import os from "os";
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
 import { createHash } from "crypto";
 import type { IpcInvoke, IpcEvents, Repo, Worktree } from "../shared/types";
 
@@ -184,10 +184,10 @@ handle("worktree:create", ({ repoId, branch }) => {
   const worktreePath = path.join(repoDir, slug);
   fs.mkdirSync(path.dirname(worktreePath), { recursive: true });
   const branchExists = existingBranches.has(name);
-  const cmd = branchExists
-    ? `git worktree add "${worktreePath}" "${name}"`
-    : `git worktree add "${worktreePath}" -b "${name}"`;
-  execSync(cmd, { cwd: repo.path });
+  const args = branchExists
+    ? ["worktree", "add", worktreePath, name]
+    : ["worktree", "add", worktreePath, "-b", name];
+  execFileSync("git", args, { cwd: repo.path });
   const wt: Worktree = { id: worktreeIdFor(worktreePath), repoId, branch: name, path: worktreePath, isMain: false };
   worktrees.set(wt.id, wt);
 
