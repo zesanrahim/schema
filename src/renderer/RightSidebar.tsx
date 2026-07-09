@@ -62,6 +62,8 @@ export function RightSidebar({ worktree, repo, onUpdateRepo, onOpenDiff }: Props
   const [workspace, setWorkspace] = useState<Workspace>({ worktreeId: worktree.id, status: "stopped", port: null, url: null });
   const [editingCommand, setEditingCommand] = useState(false);
   const [commandDraft, setCommandDraft] = useState(repo.devCommand ?? "");
+  const [editingSetup, setEditingSetup] = useState(false);
+  const [setupDraft, setSetupDraft] = useState(repo.setupCommand ?? "");
   const [diffFiles, setDiffFiles] = useState<DiffFile[]>([]);
 
   useEffect(() => {
@@ -73,6 +75,7 @@ export function RightSidebar({ worktree, repo, onUpdateRepo, onOpenDiff }: Props
   }, [worktree.id]);
 
   useEffect(() => { setCommandDraft(repo.devCommand ?? ""); }, [repo.devCommand]);
+  useEffect(() => { setSetupDraft(repo.setupCommand ?? ""); }, [repo.setupCommand]);
 
   useEffect(() => {
     loadDiff();
@@ -88,6 +91,16 @@ export function RightSidebar({ worktree, repo, onUpdateRepo, onOpenDiff }: Props
     await window.api.invoke("repo:set-dev-command", { id: repo.id, command: cmd });
     onUpdateRepo(cmd ? { ...repo, devCommand: cmd } : { ...repo });
     setEditingCommand(false);
+  }
+
+  async function saveSetupCommand() {
+    const cmd = setupDraft.trim();
+    await window.api.invoke("repo:set-setup-command", { id: repo.id, command: cmd });
+    const next = { ...repo };
+    if (cmd) next.setupCommand = cmd;
+    else delete next.setupCommand;
+    onUpdateRepo(next);
+    setEditingSetup(false);
   }
 
   function toggleWorkspace() {
@@ -187,6 +200,39 @@ export function RightSidebar({ worktree, repo, onUpdateRepo, onOpenDiff }: Props
                   style={{ marginLeft: "auto", fontSize: 11, color: "var(--accent)", textDecoration: "none" }}>
                   ↗
                 </a>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div style={{ borderTop: "1px solid var(--border)", margin: "4px 0" }} />
+
+        <div style={{ padding: "8px 12px 12px" }}>
+          <SectionLabel>Setup</SectionLabel>
+          <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 6, lineHeight: 1.5 }}>
+            Runs once after each new worktree is created. Overrides auto-detect.
+          </div>
+          {editingSetup ? (
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                autoFocus
+                value={setupDraft}
+                onChange={(e) => setSetupDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") saveSetupCommand(); if (e.key === "Escape") setEditingSetup(false); }}
+                placeholder="e.g. cmake -B build"
+                style={{ flex: 1, background: "var(--surface-2)", border: "1px solid var(--border-2)", color: "var(--text)", padding: "4px 8px", fontSize: 11, fontFamily: "Menlo, Monaco, 'Courier New', monospace", outline: "none" }}
+              />
+              <button onClick={saveSetupCommand} style={{ background: "var(--accent-dim)", border: "1px solid var(--border-2)", color: "var(--accent)", padding: "4px 8px", fontSize: 11 }}>Save</button>
+              <button onClick={() => setEditingSetup(false)} style={{ background: "none", border: "1px solid var(--border-2)", color: "var(--text-3)", padding: "4px 8px", fontSize: 11 }}>✕</button>
+            </div>
+          ) : (
+            <div>
+              {repo.setupCommand ? (
+                <span onClick={() => setEditingSetup(true)} style={{ fontSize: 11, fontFamily: "Menlo, Monaco, 'Courier New', monospace", color: "var(--text-2)", cursor: "pointer", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title="Click to edit">
+                  {repo.setupCommand}
+                </span>
+              ) : (
+                <span onClick={() => setEditingSetup(true)} style={{ fontSize: 11, color: "var(--text-3)", cursor: "pointer" }}>+ set setup command</span>
               )}
             </div>
           )}

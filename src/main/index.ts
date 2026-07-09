@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import { execSync } from "child_process";
+import { createHash } from "crypto";
 import type { IpcInvoke, IpcEvents, Repo, Worktree } from "../shared/types";
 
 import { clearToken, startDeviceFlow, pollForToken, getAuthStatus } from "./github";
@@ -12,6 +13,8 @@ import type { ProviderId } from "../shared/types.provider";
 import { chats as chatStore, loadChats, createChat, listChats, deleteChat, getMessages, sendMessage, setSender, killAllProcesses, fetchSlashCommands } from "./chat";
 import { createTerminal, writeTerminal, resizeTerminal, destroyTerminal, killAllTerminals, setTerminalSender } from "./terminal";
 import { getWorkspace, startWorkspace, stopWorkspace, killAllWorkspaces, setWorkspaceSender } from "./workspace";
+import { spawnLoginShell } from "./shell";
+import { planWorktreeSetup } from "./setup";
 import { generateWorktreeName } from "./names";
 
 const dev = process.env.NODE_ENV !== "production";
@@ -40,12 +43,48 @@ function handle<K extends keyof IpcInvoke>(
   ipcMain.handle(channel as string, (_event, args: IpcInvoke[K]["args"]) => handler(args));
 }
 
+function runSetup(worktreeId: string, worktreePath: string, cmd: string) {
+  send("worktree:install", { worktreeId, status: "installing" });
+  const proc = spawnLoginShell(cmd, {
+    cwd: worktreePath,
+    env: { ...process.env },
+    stdio: "ignore",
+  });
+  proc.on("close", (code) => {
+    if (code === 0) send("worktree:install", { worktreeId, status: "done" });
+    else send("worktree:install", { worktreeId, status: "error", error: `exited with code ${code}` });
+  });
+  proc.on("error", (err) => {
+    send("worktree:install", { worktreeId, status: "error", error: err.message });
+  });
+}
+
+function setupWorktree(worktreeId: string, worktreePath: string, repo: Repo) {
+  const plan = planWorktreeSetup(repo, worktreePath);
+  if (plan.action === "none") return;
+  if (plan.action === "run") {
+    runSetup(worktreeId, worktreePath, plan.cmd);
+    return;
+  }
+  try {
+    fs.symlinkSync(path.join(repo.path, plan.dir), path.join(worktreePath, plan.dir), "dir");
+    send("worktree:install", { worktreeId, status: "linked" });
+  } catch (err) {
+    if (plan.fallback) runSetup(worktreeId, worktreePath, plan.fallback);
+    else send("worktree:install", { worktreeId, status: "error", error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
 function reposStorePath() {
   return path.join(app.getPath("userData"), "repos.json");
 }
 
 function saveRepos() {
   fs.writeFileSync(reposStorePath(), JSON.stringify(Array.from(repos.values())));
+}
+
+function worktreeIdFor(worktreePath: string): string {
+  return createHash("sha1").update(worktreePath).digest("hex").slice(0, 16);
 }
 
 function loadWorktreesForRepo(repo: Repo): Worktree[] {
@@ -59,7 +98,7 @@ function loadWorktreesForRepo(repo: Repo): Worktree[] {
     if (!pathLine) return;
     const worktreePath = pathLine.slice("worktree ".length);
     const branch = branchLine ? branchLine.slice("branch refs/heads/".length) : "detached";
-    const wt: Worktree = { id: crypto.randomUUID(), repoId: repo.id, branch, path: worktreePath, isMain: i === 0 };
+    const wt: Worktree = { id: worktreeIdFor(worktreePath), repoId: repo.id, branch, path: worktreePath, isMain: i === 0 };
     worktrees.set(wt.id, wt);
     result.push(wt);
   });
@@ -149,8 +188,11 @@ handle("worktree:create", ({ repoId, branch }) => {
     ? `git worktree add "${worktreePath}" "${name}"`
     : `git worktree add "${worktreePath}" -b "${name}"`;
   execSync(cmd, { cwd: repo.path });
-  const wt: Worktree = { id: crypto.randomUUID(), repoId, branch: name, path: worktreePath, isMain: false };
+  const wt: Worktree = { id: worktreeIdFor(worktreePath), repoId, branch: name, path: worktreePath, isMain: false };
   worktrees.set(wt.id, wt);
+
+  setupWorktree(wt.id, worktreePath, repo);
+
   return wt;
 });
 
@@ -202,6 +244,14 @@ handle("repo:set-dev-command", ({ id, command }) => {
   const repo = repos.get(id);
   if (!repo) throw new Error(`Repo ${id} not found`);
   repo.devCommand = command;
+  saveRepos();
+});
+
+handle("repo:set-setup-command", ({ id, command }) => {
+  const repo = repos.get(id);
+  if (!repo) throw new Error(`Repo ${id} not found`);
+  if (command) repo.setupCommand = command;
+  else delete repo.setupCommand;
   saveRepos();
 });
 

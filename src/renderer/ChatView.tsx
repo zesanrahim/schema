@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import type { Chat, Message, ToolCall } from "../shared/types";
+import { toolInputPreview } from "../shared/toolPreview";
 import { DebugPanel } from "./DebugPanel";
 
 interface Props {
@@ -12,12 +13,6 @@ interface Props {
 
 type PastedBlock = { id: string; content: string; lines: number };
 type EditingBlock = { id: string; draft: string };
-
-function toolPreview(tool: ToolCall): string {
-  const val = tool.input.file_path ?? tool.input.command ?? tool.input.pattern ?? Object.values(tool.input)[0];
-  if (typeof val !== "string") return "";
-  return val.length > 50 ? val.slice(0, 50) + "…" : val;
-}
 
 function ToolCalls({ toolCalls }: { toolCalls: ToolCall[] }) {
   const [expanded, setExpanded] = useState(false);
@@ -51,7 +46,7 @@ function ToolCalls({ toolCalls }: { toolCalls: ToolCall[] }) {
           gap: 3,
         }}>
           {toolCalls.map((tc) => {
-            const preview = toolPreview(tc);
+            const preview = toolInputPreview(tc.input);
             return (
               <div key={tc.id} style={{ fontSize: 11, color: "var(--text-2)" }}>
                 <span style={{ color: "var(--text)" }}>{tc.name}</span>
@@ -187,27 +182,36 @@ export function ChatView({ chat, onNewChat, onDeleteChat, chatList, onSelectChat
     window.api.invoke("chat:messages", { chatId: chat.id }).then(setMessages);
     setSending(false);
 
-    const unsubDelta = window.api.on("chat:delta", ({ chatId, messageId, text }) => {
+    // The main process and renderer generate message ids independently, so we
+    // can't match streamed events by id. There is exactly one active (not-done)
+    // assistant message per chat, so target that instead.
+    const updateActive = (fn: (m: Message) => Message) =>
+      setMessages((prev) => {
+        let idx = -1;
+        for (let i = prev.length - 1; i >= 0; i--) {
+          const m = prev[i];
+          if (m && m.role === "assistant" && !m.done) { idx = i; break; }
+        }
+        const target = idx === -1 ? undefined : prev[idx];
+        if (!target) return prev;
+        const next = prev.slice();
+        next[idx] = fn(target);
+        return next;
+      });
+
+    const unsubDelta = window.api.on("chat:delta", ({ chatId, text }) => {
       if (chatId !== chat.id) return;
-      setMessages((prev) => prev.map((m) =>
-        m.id === messageId ? { ...m, content: m.content + text } : m
-      ));
+      updateActive((m) => ({ ...m, content: m.content + text }));
     });
 
-    const unsubToolStart = window.api.on("chat:tool-start", ({ chatId, messageId, tool }) => {
+    const unsubToolStart = window.api.on("chat:tool-start", ({ chatId, tool }) => {
       if (chatId !== chat.id) return;
-      setMessages((prev) => prev.map((m) =>
-        m.id === messageId ? { ...m, toolCalls: [...m.toolCalls, tool] } : m
-      ));
+      updateActive((m) => ({ ...m, toolCalls: [...m.toolCalls, tool] }));
     });
 
-    const unsubToolDone = window.api.on("chat:tool-done", ({ chatId, messageId, toolId, output }) => {
+    const unsubToolDone = window.api.on("chat:tool-done", ({ chatId, toolId, output }) => {
       if (chatId !== chat.id) return;
-      setMessages((prev) => prev.map((m) =>
-        m.id === messageId
-          ? { ...m, toolCalls: m.toolCalls.map((t) => t.id === toolId ? { ...t, output } : t) }
-          : m
-      ));
+      updateActive((m) => ({ ...m, toolCalls: m.toolCalls.map((t) => t.id === toolId ? { ...t, output } : t) }));
     });
 
     const unsubDone = window.api.on("chat:done", ({ chatId }) => {

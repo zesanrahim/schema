@@ -2,43 +2,11 @@ import { useState, useEffect, useRef } from "react";
 import type { GitHubUser, AnthropicAuthStatus, ProviderId } from "../shared/types";
 import { PROVIDERS } from "../shared/types";
 import { TerminalView } from "./TerminalView";
+import { sectionLabel, btn, btnGhost, btnDanger } from "./styles";
 
 interface Props {
   onBack: () => void;
 }
-
-const sectionLabel: React.CSSProperties = {
-  fontSize: 9,
-  fontWeight: 600,
-  letterSpacing: "0.1em",
-  textTransform: "uppercase",
-  color: "var(--text-3)",
-  marginBottom: 12,
-};
-
-const btn: React.CSSProperties = {
-  background: "var(--accent-dim)",
-  border: "1px solid var(--accent)",
-  color: "var(--accent)",
-  padding: "7px 14px",
-  fontSize: 12,
-};
-
-const btnGhost: React.CSSProperties = {
-  background: "none",
-  border: "1px solid var(--border-2)",
-  color: "var(--text-2)",
-  padding: "7px 14px",
-  fontSize: 12,
-};
-
-const btnDanger: React.CSSProperties = {
-  background: "none",
-  border: "1px solid var(--border-2)",
-  color: "var(--red)",
-  padding: "7px 14px",
-  fontSize: 12,
-};
 
 type GhAuthState = "idle" | "waiting" | "polling" | "done" | "error";
 
@@ -203,6 +171,9 @@ export function Settings({ onBack }: Props) {
                 </div>
               ))}
             </div>
+            <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 8 }}>
+              New chats will use this provider by default.
+            </div>
           </div>
 
           <div>
@@ -316,43 +287,6 @@ export function Settings({ onBack }: Props) {
                 </div>
               </>
             )}
-          </div>
-
-          <div>
-            <div style={sectionLabel}>Default Provider</div>
-            <div style={{ display: "flex", gap: 8 }}>
-              {PROVIDERS.map((p) => {
-                const active = defaultProvider === p.id;
-                return (
-                  <button
-                    key={p.id}
-                    onClick={async () => {
-                      setDefaultProvider(p.id);
-                      await window.api.invoke("settings:set", { defaultProviderId: p.id });
-                    }}
-                    style={{
-                      background: active ? "var(--accent-dim)" : "var(--surface)",
-                      border: `1px solid ${active ? "var(--accent)" : "var(--border-2)"}`,
-                      color: active ? "var(--accent)" : "var(--text-2)",
-                      padding: "8px 16px",
-                      fontSize: 12,
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "flex-start",
-                      gap: 3,
-                      cursor: "pointer",
-                      flex: 1,
-                    }}
-                  >
-                    <span style={{ fontWeight: 600 }}>{p.name}</span>
-                    <span style={{ fontSize: 10, color: active ? "var(--accent)" : "var(--text-3)" }}>{p.description}</span>
-                  </button>
-                );
-              })}
-            </div>
-            <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 8 }}>
-              New chats will use this provider by default.
-            </div>
           </div>
 
           <div>
