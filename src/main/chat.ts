@@ -1,13 +1,12 @@
 import { ChildProcessWithoutNullStreams } from "child_process";
 import fs from "fs";
-import path from "path";
-import { app } from "electron";
 import type { Chat, Message, ToolCall, Sender } from "../shared/types";
 import type { ProviderId } from "../shared/types.provider";
 import { toolInputPreview } from "../shared/toolPreview";
 import { getAnthropicEnv } from "./anthropic";
 import { getProvider } from "./providers";
 import { spawnLoginShell } from "./shell";
+import * as db from "./db";
 
 export const chats = new Map<string, Chat>();
 export const chatMessages = new Map<string, Message[]>();
@@ -30,29 +29,13 @@ function dbg(chatId: string, msg: string) {
   globalSend("chat:debug", { chatId, message: `${ts} ${msg}` });
 }
 
-function storagePath() {
-  return path.join(app.getPath("userData"), "chats.json");
-}
-
 export function loadChats() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(storagePath(), "utf8")) as {
-      chats: Chat[];
-      messages: Record<string, Message[]>;
-    };
-    for (const c of raw.chats) chats.set(c.id, c);
-    for (const [id, msgs] of Object.entries(raw.messages)) {
-      for (const m of msgs) if (!m.done) m.done = true;
-      chatMessages.set(id, msgs);
-    }
-  } catch {}
-}
-
-export function persistChats() {
-  fs.writeFileSync(
-    storagePath(),
-    JSON.stringify({ chats: Array.from(chats.values()), messages: Object.fromEntries(chatMessages) })
-  );
+  const { chats: stored, messages } = db.loadAll();
+  for (const c of stored) chats.set(c.id, c);
+  for (const [id, msgs] of messages) {
+    for (const m of msgs) if (!m.done) { m.done = true; db.upsertMessage(id, m); }
+    chatMessages.set(id, msgs);
+  }
 }
 
 export function createChat(worktreeId: string, providerId: ProviderId = "claude"): Chat {
@@ -66,7 +49,7 @@ export function createChat(worktreeId: string, providerId: ProviderId = "claude"
   };
   chats.set(chat.id, chat);
   chatMessages.set(chat.id, []);
-  persistChats();
+  db.insertChat(chat);
   return chat;
 }
 
@@ -80,7 +63,7 @@ export function deleteChat(id: string) {
   stopProcess(id);
   chats.delete(id);
   chatMessages.delete(id);
-  persistChats();
+  db.deleteChat(id);
 }
 
 export function getMessages(chatId: string): Message[] {
@@ -131,7 +114,8 @@ function dispatchEvents(chatId: string, rawEvent: Record<string, unknown>) {
       if (msg) {
         msg.done = true;
         activeMessages.delete(chatId);
-        persistChats();
+        if (chat) db.updateChat(chat);
+        db.upsertMessage(chatId, msg);
         globalSend("chat:done", { chatId, messageId: msg.id });
       }
     } else if (ev.type === "error") {
@@ -273,6 +257,7 @@ export function sendMessage(chatId: string, userText: string, worktreePath: stri
     if (chat.title === "New chat") {
       chat.title = userText.length > 40 ? userText.slice(0, 40) + "…" : userText;
     }
+    db.upsertMessage(chatId, userMsg);
   }
 
   const assistantId = crypto.randomUUID();
@@ -287,7 +272,8 @@ export function sendMessage(chatId: string, userText: string, worktreePath: stri
   msgs.push(assistantMsg);
   chatMessages.set(chatId, msgs);
   activeMessages.set(chatId, assistantMsg);
-  persistChats();
+  db.updateChat(chat);
+  db.upsertMessage(chatId, assistantMsg);
 
   dbg(chatId, `sending message: ${userText.slice(0, 60)}`);
   const provider = getProvider(chat.providerId as ProviderId);
