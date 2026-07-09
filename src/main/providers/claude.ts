@@ -1,18 +1,16 @@
 import type { NormalizedEvent } from "../../shared/types.provider";
 import type { Provider } from "./base";
 
-function inputPreview(input: Record<string, unknown>): string {
-  const val = input.file_path ?? input.command ?? input.pattern ?? Object.values(input)[0];
-  if (typeof val !== "string") return "";
-  return val.length > 60 ? val.slice(0, 60) + "…" : val;
-}
-
 export const claudeProvider: Provider = {
   id: "claude",
 
   spawnScript(sessionId) {
     const resume = sessionId ? `--resume "${sessionId}"` : "";
-    return `claude --output-format stream-json --verbose --dangerously-skip-permissions ${resume}`.trim();
+    return `claude --input-format stream-json --output-format stream-json --verbose --dangerously-skip-permissions ${resume}`.trim();
+  },
+
+  formatInput(text) {
+    return JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text }] } }) + "\n";
   },
 
   parseEvent(event): NormalizedEvent[] {
@@ -60,5 +58,3 @@ export const claudeProvider: Provider = {
     return [];
   },
 };
-
-export { inputPreview };

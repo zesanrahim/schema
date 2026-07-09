@@ -16,6 +16,10 @@ export const opencodeProvider: Provider = {
     return `opencode run --format json --dangerously-skip-permissions ${session}`.trim();
   },
 
+  formatInput(text) {
+    return text + "\n";
+  },
+
   parseEvent(event): NormalizedEvent[] {
     const sessionId = event.sessionID as string | undefined;
 
