@@ -139,6 +139,13 @@ function state(worktreeId: string, branch: string, isBase: boolean, action: GitA
   return { worktreeId, branch, isBase, action, label: LABELS[action], enabled: ENABLED[action], busy: false, detail, pr, ci };
 }
 
+function localOnly(worktreeId: string, local: LocalState, detail: string | null): GitState {
+  const noCi = { status: "none" as CiStatus, url: null };
+  if (local.dirty) return state(worktreeId, local.branch, false, "commit-push", null, noCi, detail);
+  if (local.ahead > 0 && local.hasUpstream) return state(worktreeId, local.branch, false, "push", null, noCi, detail);
+  return state(worktreeId, local.branch, false, "up-to-date", null, noCi, detail);
+}
+
 export async function computeGitState(worktreeId: string, cwd: string): Promise<GitState> {
   const local = localState(cwd);
   const noCi = { status: "none" as CiStatus, url: null };
@@ -146,10 +153,17 @@ export async function computeGitState(worktreeId: string, cwd: string): Promise<
   if (!hasToken()) return state(worktreeId, local.branch, false, "connect", null, noCi, null);
 
   const slug = repoSlug(cwd);
-  if (!slug) {
-    return state(worktreeId, local.branch, false, local.dirty ? "commit-push" : "up-to-date", null, noCi, "No GitHub remote");
-  }
+  if (!slug) return localOnly(worktreeId, local, "No GitHub remote");
 
+  try {
+    return await remoteGitState(worktreeId, local, slug);
+  } catch (e) {
+    return localOnly(worktreeId, local, `GitHub unreachable: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+async function remoteGitState(worktreeId: string, local: LocalState, slug: { owner: string; repo: string }): Promise<GitState> {
+  const noCi = { status: "none" as CiStatus, url: null };
   const repo = await getRepoInfo(slug.owner, slug.repo);
   const isBase = local.branch === repo.default_branch;
   if (isBase) return state(worktreeId, local.branch, true, "up-to-date", null, noCi, `On ${repo.default_branch}`);
