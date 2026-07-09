@@ -68,8 +68,9 @@ function setupWorktree(worktreeId: string, worktreePath: string, repo: Repo) {
   try {
     fs.symlinkSync(path.join(repo.path, plan.dir), path.join(worktreePath, plan.dir), "dir");
     send("worktree:install", { worktreeId, status: "linked" });
-  } catch {
+  } catch (err) {
     if (plan.fallback) runSetup(worktreeId, worktreePath, plan.fallback);
+    else send("worktree:install", { worktreeId, status: "error", error: err instanceof Error ? err.message : String(err) });
   }
 }
 

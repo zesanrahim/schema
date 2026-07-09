@@ -33,7 +33,11 @@ export function loadChats() {
   const { chats: stored, messages } = db.loadAll();
   for (const c of stored) chats.set(c.id, c);
   for (const [id, msgs] of messages) {
-    for (const m of msgs) if (!m.done) { m.done = true; db.upsertMessage(id, m); }
+    for (const m of msgs) if (!m.done) {
+      m.done = true;
+      if (m.role === "assistant" && !m.content && m.toolCalls.length === 0) m.content = "[interrupted]";
+      db.upsertMessage(id, m);
+    }
     chatMessages.set(id, msgs);
   }
 }
@@ -192,9 +196,10 @@ function ensureProcess(chatId: string, worktreePath: string): ChildProcessWithou
   proc.stderr.on("data", (chunk: Buffer) => {
     const text = chunk.toString();
     dbg(chatId, `STDERR: ${text.trim().slice(0, 200)}`);
-    // Accumulate for diagnostics only. The Claude CLI writes non-fatal noise to
-    // stderr; the real completion/failure signals come via stdout `result`
-    // events and the `close` handler, so we don't kill on stderr here.
+    // stderr is progress/diagnostics, not a failure signal — the real
+    // completion/failure comes via stdout `result` events and `close`. Treat it
+    // as activity so a CLI that only writes to stderr isn't killed as idle.
+    armTimeout();
     stderrChunks.push(text);
   });
 
