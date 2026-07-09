@@ -4,7 +4,7 @@ import { LOGIN_SHELL } from "./shell";
 import type { GitState, GitAction, CiStatus, PrInfo, ReviewDecision } from "../shared/types.git";
 
 function git(cwd: string, ...args: string[]): string {
-  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
 interface LocalState {
