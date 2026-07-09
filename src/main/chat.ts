@@ -41,7 +41,10 @@ export function loadChats() {
       messages: Record<string, Message[]>;
     };
     for (const c of raw.chats) chats.set(c.id, c);
-    for (const [id, msgs] of Object.entries(raw.messages)) chatMessages.set(id, msgs);
+    for (const [id, msgs] of Object.entries(raw.messages)) {
+      for (const m of msgs) if (!m.done) m.done = true;
+      chatMessages.set(id, msgs);
+    }
   } catch {}
 }
 
@@ -284,6 +287,7 @@ export function sendMessage(chatId: string, userText: string, worktreePath: stri
   msgs.push(assistantMsg);
   chatMessages.set(chatId, msgs);
   activeMessages.set(chatId, assistantMsg);
+  persistChats();
 
   dbg(chatId, `sending message: ${userText.slice(0, 60)}`);
   const provider = getProvider(chat.providerId as ProviderId);
