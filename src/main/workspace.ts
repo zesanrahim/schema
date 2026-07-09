@@ -28,7 +28,7 @@ const portPatterns = [
 ];
 
 function stripAnsi(text: string): string {
-  return text.replace(/\x1b\[[0-9;]*m/g, "");
+  return text.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
 }
 
 function detectPort(text: string): number | null {
@@ -67,6 +67,7 @@ export function startWorkspace(worktreeId: string, cwd: string, command: string,
 
     if (!ws.url) {
       outputBuffer += stripAnsi(chunk.toString());
+      if (outputBuffer.length > 8192) outputBuffer = outputBuffer.slice(-8192);
       const port = detectPort(outputBuffer);
       if (port) {
         ws.port = port;

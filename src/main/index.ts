@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import { execSync } from "child_process";
+import { createHash } from "crypto";
 import type { IpcInvoke, IpcEvents, Repo, Worktree } from "../shared/types";
 
 import { clearToken, startDeviceFlow, pollForToken, getAuthStatus } from "./github";
@@ -67,8 +68,9 @@ function setupWorktree(worktreeId: string, worktreePath: string, repo: Repo) {
   try {
     fs.symlinkSync(path.join(repo.path, plan.dir), path.join(worktreePath, plan.dir), "dir");
     send("worktree:install", { worktreeId, status: "linked" });
-  } catch {
+  } catch (err) {
     if (plan.fallback) runSetup(worktreeId, worktreePath, plan.fallback);
+    else send("worktree:install", { worktreeId, status: "error", error: err instanceof Error ? err.message : String(err) });
   }
 }
 
@@ -78,6 +80,10 @@ function reposStorePath() {
 
 function saveRepos() {
   fs.writeFileSync(reposStorePath(), JSON.stringify(Array.from(repos.values())));
+}
+
+function worktreeIdFor(worktreePath: string): string {
+  return createHash("sha1").update(worktreePath).digest("hex").slice(0, 16);
 }
 
 function loadWorktreesForRepo(repo: Repo): Worktree[] {
@@ -91,7 +97,7 @@ function loadWorktreesForRepo(repo: Repo): Worktree[] {
     if (!pathLine) return;
     const worktreePath = pathLine.slice("worktree ".length);
     const branch = branchLine ? branchLine.slice("branch refs/heads/".length) : "detached";
-    const wt: Worktree = { id: crypto.randomUUID(), repoId: repo.id, branch, path: worktreePath, isMain: i === 0 };
+    const wt: Worktree = { id: worktreeIdFor(worktreePath), repoId: repo.id, branch, path: worktreePath, isMain: i === 0 };
     worktrees.set(wt.id, wt);
     result.push(wt);
   });
@@ -171,7 +177,7 @@ handle("worktree:create", ({ repoId, branch }) => {
     ? `git worktree add "${worktreePath}" "${branch}"`
     : `git worktree add "${worktreePath}" -b "${branch}"`;
   execSync(cmd, { cwd: repo.path });
-  const wt: Worktree = { id: crypto.randomUUID(), repoId, branch, path: worktreePath, isMain: false };
+  const wt: Worktree = { id: worktreeIdFor(worktreePath), repoId, branch, path: worktreePath, isMain: false };
   worktrees.set(wt.id, wt);
 
   setupWorktree(wt.id, worktreePath, repo);
